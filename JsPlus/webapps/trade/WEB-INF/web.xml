@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<web-app>
+	<display-name>KILLCODING-CORE</display-name>
+	<!-- <listener>
+		<listener-class>com.killcoding.web.ApplicationListener</listener-class>
+	</listener>	 -->
+	<!-- <filter>
+		<filter-name>ControFilter</filter-name>
+		<filter-class>com.killcoding.web.ControFilter</filter-class>
+	</filter>
+	<filter-mapping>
+		<filter-name>ControFilter</filter-name>
+		<url-pattern>*</url-pattern>
+		 <dispatcher>REQUEST</dispatcher>
+	     <dispatcher>FORWARD</dispatcher> 
+	</filter-mapping> -->
+
+    <servlet>
+        <servlet-name>DefaultServlet</servlet-name>
+        <servlet-class>org.apache.catalina.servlets.DefaultServlet</servlet-class>
+
+        <load-on-startup>1</load-on-startup>
+
+        <init-param>
+            <param-name>listings</param-name>
+            <param-value>true</param-value>
+        </init-param>
+        <init-param>
+            <param-name>readonly</param-name>
+            <param-value>true</param-value>
+        </init-param>
+        <init-param>
+            <param-name>debug</param-name>
+            <param-value>0</param-value>
+        </init-param>
+        <init-param>
+            <param-name>fileEncoding</param-name>
+            <param-value>UTF-8</param-value>
+        </init-param>
+    </servlet>
+
+   <servlet-mapping>
+        <servlet-name>DefaultServlet</servlet-name>
+        <url-pattern>/</url-pattern>
+    </servlet-mapping>
+	<session-config>
+	    <session-timeout>60</session-timeout>
+	</session-config>
+</web-app>

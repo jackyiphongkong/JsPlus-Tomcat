@@ -1,0 +1,62 @@
+<?xml version="1.0" ?>
+<project name="JsPlus-Tomcat" default="build" basedir=".">
+	<property environment="env" />
+	<property name="jr.version" value="6.0.0" />
+	<property name="jr.charset" value="UTF-8" />
+	<property name="jr.root" location="./" />
+	<property name="jr.src" value="${jr.root}/src" />
+	<property name="jr.lib" value="${jr.root}/LibHome/" />
+	<property name="jr.build" value="${jr.root}/build/" />
+	<property name="jr.classes" value="${jr.build}/classes" />
+
+	<path id="classpath">
+		<fileset dir="${jr.lib}">
+			<include name="**/*.jar" />
+		</fileset>
+	</path>
+	
+    <target name="clear">
+		<delete dir="${jr.classes}" />
+		<mkdir dir="${jr.classes}" />
+	</target>
+	
+    <target name="compile" depends="clear">
+		<javac debug="true"  destdir="${jr.classes}" encoding="${jr.charset}" nowarn="true" includeantruntime="false">
+			<src>
+				<pathelement location="${jr.src}" />
+			</src>
+			<classpath refid="classpath" />
+			<compilerarg line="-Xlint:-unchecked -Xlint:-deprecation"/>
+			<compilerarg value="-Xlint:none"/>
+		</javac>
+		<copy todir="${jr.classes}">
+			<fileset dir="${jr.src}">
+				<exclude name="**/*.java" />
+			</fileset>
+		</copy>
+	</target>
+
+
+	<target name="package" depends="compile">
+	    <manifestclasspath property="jar.classpath" jarfile="main.jar">
+	      <classpath>
+	        <fileset dir="${jr.lib}" includes="*.jar"/>
+	      </classpath>
+	    </manifestclasspath>
+		
+		<jar jarfile="${jr.lib}/jsplus/default/jsplus-tomcat.jar" >
+			<fileset dir="${jr.classes}">
+				<include name="com/**/**/*" />
+				<include name="org/**/**/*" />
+			</fileset>
+
+			<!--<manifest>-->
+			<!--    <attribute name="Main-Class"  value="com.killcoding.jsplus.tomcat.TomcatServer"/>-->
+			<!--	<attribute name="Class-Path" value="${jar.classpath}"/>-->
+			<!--</manifest>-->
+		</jar>
+	</target>
+	<target name="build">
+		<ant target="package" />
+	</target>
+</project>

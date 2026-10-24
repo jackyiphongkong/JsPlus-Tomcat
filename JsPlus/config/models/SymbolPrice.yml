@@ -1,0 +1,8 @@
+ 
+attributes: 
+  symbol: 
+    type: String
+    default: ~
+    validates_presence_of: ~
+    validates_length_of: 
+      within: [1,20]

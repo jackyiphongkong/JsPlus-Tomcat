@@ -1,0 +1,11 @@
+ 
+models:  
+  Product:
+    username: Jack Yip
+
+attributes: 
+  Account: 
+    group_code: Group Code
+    param_key: Param Key
+    param_value: Param Value
+    description: Description
