@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  automated-tests:
+    name: Automated Tests (TestAll)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: graalvm
+          java-version: '25'
+
+      - name: Install Ant
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ant
+
+      - name: Build jsplus-tomcat.jar
+        run: ant build
+
+      - name: Run TestAll.sh
+        run: |
+          chmod +x TestAll.sh ../JsPlus/bin/*.sh ../JsPlus/ghost/*.sh
+          ./TestAll.sh
+        working-directory: test
+
+      - name: Publish CI summary
+        run: |
+          if [ -f test_reports/TestAll-CI-Summary.md ]; then
+            cat test_reports/TestAll-CI-Summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload test reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            test_reports/
+            logs/
+          if-no-files-found: error
