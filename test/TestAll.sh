@@ -178,7 +178,7 @@ echo "[TestAll] Tomcat ready. Running load test..."
 # script itself. Stdin /dev/null lets Main exit right after the task.
 LOADTEST_URL="${LOADTEST_URL:-https://localhost:8443/default/}"
 LOADTEST_CONCURRENCY="${LOADTEST_CONCURRENCY:-10}"
-LOADTEST_TOTAL="${LOADTEST_TOTAL:-1000}"
+LOADTEST_TOTAL="${LOADTEST_TOTAL:-50000}"
 LOADTEST_TIMEOUT="${LOADTEST_TIMEOUT:-30}"
 ( cd "${JS_PLUS_PATH}../test" && "$JAVA_BIN" ${JvmParams} -cp "$DEPEND_LIBS" \
     com.killcoding.jsplus.Main -ScriptEngine "$SCRIPT_ENGINE" -Env script -WriteHistory false \
