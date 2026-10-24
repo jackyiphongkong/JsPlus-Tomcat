@@ -84,9 +84,6 @@ function main() {
           + " total=" + total + " timeout=" + timeoutSec + "s");
 
     // --- base path (normalized JS_PLUS_PATH) ---
-    // JS_PLUS_PATH may carry a "test/.." style prefix when launched from
-    // TestAll.bat; normalize it once so derived paths are stable on both
-    // Windows and Linux CI.
     var PathsT = Java.type("java.nio.file.Paths");
     var jppRaw = System.getenv("JS_PLUS_PATH");
     var jppBase = "";
@@ -125,8 +122,7 @@ function main() {
         .build();
 
     // --- warm-up: a few unmeasured requests so SSL session + DB pools are
-    // ready before the measured run (otherwise the first wave can hit connect
-    // timeouts against a just-started Tomcat). ---
+    // ready before the measured run ---
     for (var w = 0; w < Math.min(5, total); w++) {
         try {
             client.send(request, HttpResponse.BodyHandlers.ofString());
@@ -136,10 +132,11 @@ function main() {
     }
 
     // --- measured run: fire inFlight requests at a time, wait via
-    // CompletableFuture.allOf().get() (pure Java blocking call — safe), then
-    // read each future. Transport-level failures (connect/reset/timeout) are
-    // transient under concurrency; retry twice synchronously before counting
-    // the request as failed. Any HTTP response counts as success. ---
+    // CompletableFuture.allOf().get() (pure Java blocking call — safe on this
+    // GraalVM build), then read each future. Transport-level failures
+    // (connect/reset/timeout) are transient under concurrency; retry twice
+    // synchronously before counting the request as failed. Any HTTP response
+    // counts as success. ---
     var startAtomic = new AtomicLong(System.nanoTime());
     var list = [];           // {status, latencyMs, doneAtSec, error?}
     var sent = 0;
@@ -203,7 +200,7 @@ function main() {
     }
     var elapsedMs = (System.nanoTime() - startAtomic.get()) / 1000000;
 
-    // --- aggregate (single-threaded, main script) ---
+    // --- aggregate ---
     var lats = [];
     for (var i = 0; i < list.length; i++) {
         if (list[i].status > 0) lats.push(list[i].latencyMs);
@@ -271,24 +268,18 @@ function main() {
     json += "]\n";
     json += "}\n";
 
-    // --- HTML dashboard (offline, static SVG/CSS — same as Java version) ---
+    // --- HTML dashboard (offline, static SVG/CSS) ---
     var html = buildHtml(url, concurrency, total, ts, Math.round(elapsedMs),
         success, failed, round1(qps), Math.round(avg), Math.round(p50), Math.round(p90),
         Math.round(p95), Math.round(p99), Math.round(max), statusCount, perSec, hist, errors);
 
-    // --- write outputs into ../test_reports/ ---
-    // Resolve the reports directory robustly: JsPlus may inject JS_PLUS_PATH as
-    // <project>/LibHome/jsplus/default (walk up 3 levels) or as <project>/JsPlus
-    // (walk up 1 level); fall back to CWD-relative ../test_reports (test/).
-    var Files = Java.type("java.nio.file.Files");
-    var Paths = Java.type("java.nio.file.Paths");
-    var StandardCharsets = Java.type("java.nio.charset.StandardCharsets");
-    var jpp = System.getenv("JS_PLUS_PATH");
+    // --- write outputs into test_reports/ ---
+    var Files2 = Java.type("java.nio.file.Files");
+    var Paths2 = Java.type("java.nio.file.Paths");
+    var StandardCharsets2 = Java.type("java.nio.charset.StandardCharsets");
     var reportCandidates = [];
     if (jppBase !== "") {
-        // <project>/test_reports when the runtime home is JsPlus/ itself
         reportCandidates.push(jppBase + "/../../test_reports/");
-        // <project>/test_reports when the runtime home is LibHome/jsplus/<ver>/
         reportCandidates.push(jppBase + "/../../../test_reports/");
     }
     reportCandidates.push("../test_reports/");
@@ -297,24 +288,18 @@ function main() {
     for (var i = 0; i < reportCandidates.length; i++) {
         var rf = new File(reportCandidates[i]);
         try {
-            if (rf.exists()) {
-                reportDir = rf.getCanonicalPath().replace("\\", "/") + "/";
-                break;
-            }
+            if (rf.exists()) { reportDir = rf.getCanonicalPath().replace("\\", "/") + "/"; break; }
         } catch (e) {}
     }
     if (reportDir === null) {
-        // none existed yet — create the most sensible candidate
         var mk = new File(reportCandidates[0]);
         try { mk.mkdirs(); } catch (e) {}
         reportDir = mk.getCanonicalPath().replace("\\", "/") + "/";
     }
     print("LoadTest reportDir=" + reportDir);
-    // Files.writeString(Path, CharSequence, Charset) — single overload,
-    // JS strings adapt to CharSequence directly (no byte[] conversion needed).
-    Files.writeString(Paths.get(reportDir + "loadtest-result.json"), json, StandardCharsets.UTF_8);
+    Files2.writeString(Paths2.get(reportDir + "loadtest-result.json"), json, StandardCharsets2.UTF_8);
     print("JSON written to " + reportDir + "loadtest-result.json");
-    Files.writeString(Paths.get(reportDir + "loadtest-dashboard.html"), html, StandardCharsets.UTF_8);
+    Files2.writeString(Paths2.get(reportDir + "loadtest-dashboard.html"), html, StandardCharsets2.UTF_8);
     print("Dashboard written to " + reportDir + "loadtest-dashboard.html");
     print("Result: success=" + success + " failed=" + failed
           + " qps=" + round1(qps) + " avg=" + Math.round(avg)
