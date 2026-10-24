@@ -179,7 +179,7 @@ REM finish in seconds). Env vars LOADTEST_URL/CONCURRENCY/TOTAL/TIMEOUT are
 REM read by the script itself.
 if not defined LOADTEST_URL set "LOADTEST_URL=https://localhost:8443/default/"
 if not defined LOADTEST_CONCURRENCY set "LOADTEST_CONCURRENCY=10"
-if not defined LOADTEST_TOTAL set "LOADTEST_TOTAL=10000"
+if not defined LOADTEST_TOTAL set "LOADTEST_TOTAL=50000"
 if not defined LOADTEST_TIMEOUT set "LOADTEST_TIMEOUT=30"
 
 pushd "%JS_PLUS_PATH%..\test"
