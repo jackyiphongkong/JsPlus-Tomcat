@@ -261,8 +261,8 @@ function cfgCheck(name, key, expected, command) {
 
 // Case C8
 cfgCheck("Webapp.appBase[0] key (renamed)", "Webapp.appBase[0]",
-    "${JS_PLUS_PATH}/webapps/trade/",
-    "Webapp.appBase[0]=${JS_PLUS_PATH}/webapps/trade/  (config)");
+    "${JS_PLUS_PATH}/webapps/default/",
+    "Webapp.appBase[0]=${JS_PLUS_PATH}/webapps/default/  (config)");
 
 // Regression guard: the OLD bare keys must NOT exist anymore.
 
@@ -553,6 +553,22 @@ check({
     objectiveZh: "驗證對純文字連接埠之 HTTP_2 prior-knowledge 請求協商出 HTTP_2（h2c Upgrade）",
     command: "HttpClient(HTTP_2).send(GET http://localhost:8080/) -> response version"
 });
+
+// ---------------------------------------------------------------------------
+// H. Webapp.[1] default context — shipped config now deploys the default webapp
+//    (webapps/default) at contextPath /default (renamed from webapps/trade at
+//    /default_a).
+// ---------------------------------------------------------------------------
+
+// Case C35 — Webapp.contextPath[1] must be /default.
+cfgCheck("Webapp.contextPath[1] key (/default)", "Webapp.contextPath[1]",
+    "/default",
+    "Webapp.contextPath[1]=/default  (config)");
+
+// Case C36 — Webapp.appBase[1] must point at webapps/default/.
+cfgCheck("Webapp.appBase[1] key (webapps/default)", "Webapp.appBase[1]",
+    "${JS_PLUS_PATH}/webapps/default/",
+    "Webapp.appBase[1]=${JS_PLUS_PATH}/webapps/default/  (config)");
 
 // ---------------------------------------------------------------------------
 // Summary

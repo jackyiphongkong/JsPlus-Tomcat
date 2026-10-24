@@ -309,17 +309,17 @@ check({
 // ---------------------------------------------------------------------------
 
 // Case C18 — create the internal-mode mapping localhost:8443/test ->
-// https://127.0.0.1/default_a (the target's path component is the destination
+// https://127.0.0.1/default (the target's path component is the destination
 // webapp context; host/port are ignored in internal mode).
 r = callTomcat(function(){ return tomcat.setDomainMapping("localhost", "8443", "/test",
-    {mode: "internal", target: "https://127.0.0.1/default_a", scriptEnable: false}); });
+    {mode: "internal", target: "https://127.0.0.1/default", scriptEnable: false}); });
 check({
     name: "setDomainMapping localhost:8443 uri=/test mode=internal",
     ok: isOk(r),
     detail: msg(r) + dbVerify(function(){ return "SELECT * FROM domain_mapping_param WHERE domain='localhost' AND port='8443' AND uri='/test' AND deleted=FALSE"; }),
-    objective: "Verify an internal-mode uri mapping (localhost:8443/test -> local webapp /default_a) is created and persisted",
-    objectiveZh: "驗證可建立並持久化 internal 模式之 URI 對應（localhost:8443/test → 本地 /default_a）",
-    command: "tomcat.setDomainMapping(\"localhost\", \"8443\", \"/test\", {mode: \"internal\", target: \"https://127.0.0.1/default_a\", scriptEnable: false})"
+    objective: "Verify an internal-mode uri mapping (localhost:8443/test -> local webapp /default) is created and persisted",
+    objectiveZh: "驗證可建立並持久化 internal 模式之 URI 對應（localhost:8443/test → 本地 /default）",
+    command: "tomcat.setDomainMapping(\"localhost\", \"8443\", \"/test\", {mode: \"internal\", target: \"https://127.0.0.1/default\", scriptEnable: false})"
 });
 
 // Case C19 — request /test/ through the internal mapping: must NOT be a proxy
@@ -350,8 +350,8 @@ check({
     name: "curl GET https://localhost:8443/test/ (internal dispatch, no 502/redirect)",
     ok: internalCurlOk,
     detail: "status=" + statusCode + " externalLocation=" + hasExternalLocation + " html=" + bodyText + dbVerify(function(){ return "SELECT * FROM domain_mapping_param WHERE domain='localhost' AND port='8443' AND uri='/test' AND deleted=FALSE"; }),
-    objective: "Verify mode=internal dispatches to the local webapp (no proxy 502, no external redirect) and records the served HTML body; in the test environment /default_a does not exist so a local 404 also proves dispatch happened",
-    objectiveZh: "驗證 internal 模式於本地分派請求（無代理 502、無外部重定向）並記錄返回之 HTML 內容；測試環境中 /default_a 不存在，本地 404 亦證明分派已執行",
+    objective: "Verify mode=internal dispatches to the local webapp (no proxy 502, no external redirect) and records the served HTML body; /default is served by webapps/default so a local 200 proves the dispatch path",
+    objectiveZh: "驗證 internal 模式於本地分派請求（無代理 502、無外部重定向）並記錄返回之 HTML 內容；/default 由 webapps/default 提供，本地 200 證明分派已執行",
     command: "curl -k -s -o NUL -D - https://localhost:8443/test/ && curl -k -s https://localhost:8443/test/"
 });
 
@@ -376,7 +376,7 @@ var internalScriptMsg = "";
 try {
     var p = new HashMap();
     p.put("mode", "internal");
-    p.put("target", "https://127.0.0.1/default_a");
+    p.put("target", "https://127.0.0.1/default");
     p.put("scriptEnable", true);
     p.put("scriptFile", "filter_script.js");
     var rawRes = DomainProxy.setDomainMapping("localhost", "8443", "/test_script", p);

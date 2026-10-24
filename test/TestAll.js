@@ -344,9 +344,13 @@ if (BOOTSTRAPPED) {
     }
 }
 
-// Script/Task mode (TestAll.bat/.sh): exit the JVM immediately so the
-// launcher returns without waiting on the console scanner. Interactive
-// console eval keeps BOOTSTRAPPED=false and must NOT kill the console.
+// Script/Task mode (TestAll.bat/.sh): exit this JVM directly WITHOUT
+// writing the shared exit.tmp signal file — ScriptConsole.exit() writes
+// <JS_PLUS_PATH>/.tmp/exit.tmp, which every other JsPlus JVM watching it
+// (including the H2 ghost started by BG_StartH2.bat / StartH2.js) would
+// detect and shut down together with this JVM. System.exit(0) only
+// terminates this process, leaving H2 running for TestAll's load-test step.
+// Interactive console eval keeps BOOTSTRAPPED=false and must NOT kill the console.
 if (BOOTSTRAPPED) {
-    com.killcoding.jsplus.ScriptConsole.exit();
+    Java.type("java.lang.System").exit(0);
 }

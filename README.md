@@ -309,7 +309,7 @@ To switch modes, edit `tomcat.properties`, then restart — the change applies f
 |---|---|---|
 | `port` | `${TOMCAT_PORT}` (8080) | HTTP connector port |
 | `sslPort` | `8443` | HTTPS connector port |
-| `Webapp.contextPath[n]` / `Webapp.appBase[n]` | `/` → `webapps/trade/` | webapp deployments |
+| `Webapp.contextPath[n]` / `Webapp.appBase[n]` | `/` → `webapps/default/` | webapp deployments |
 | `maxThreads` / `maxPostSize` / `maxSavePostSize` | `1000` / `200MB` | connector limits |
 | `connectionTimeout` / `keepAliveTimeout` | `300000` | connector timeouts (ms) |
 | `reloadable` | `true` | hot reload of deployed webapps |
@@ -713,7 +713,8 @@ launcher scripts needed:
 | `TestTomcatServer.js` | 34 cases — TomcatServer behaviour through the `tomcat` console entry (`TomcatEmbed.js`): `addSslHost` + cleanup, `Webapp.contextPath`/`Webapp.appBase` config contract (incl. legacy-key regression guard), `SSL.*` block, keystore readiness (JKS + alias + trust anchor), read-only behaviour smoke (`getTomcat` / `queryDomainSslHosts` / `loadDomainSslHosts`), DomainSslHost CRUD, and the HTTP/2 contract (`Http2.enable=true` config + live h2c handshake on the plain connector) — every API call records its `{code, msg}` return value, DB writes carry a `dbVerify` (`SELECT *`) verification + cleanup |
 
 Run the full suite in one go (stops services -> DB init -> H2 -> embedded
-Tomcat -> 108 checks -> `test_reports/`):
+Tomcat -> 108 checks -> load test against a standalone Tomcat ->
+`test_reports/`):
 
 - Windows: `test\TestAll.bat`
 - Linux: `test/TestAll.sh`
@@ -762,6 +763,31 @@ written to `test_reports/TestDomainProxy-Report.html`,
 `test_reports/TestIpFilter-Report.html`,
 `test_reports/TestIpAttackDefense-Report.html` and
 `test_reports/TestTomcatServer-Report.html`.
+
+Step 3 of `TestAll.bat` / `TestAll.sh` then starts a standalone Tomcat and runs
+the built-in load test (`test/LoadTest.js`, a pure-JS port executed through the
+JsPlus console — no separate Java compilation step; defaults:
+`https://localhost:8443/default/`, 10 concurrent x 1000 requests, 30 s timeout;
+override via `LOADTEST_URL` / `LOADTEST_CONCURRENCY` / `LOADTEST_TOTAL` /
+`LOADTEST_TIMEOUT`), writing `test_reports/loadtest-result.json` (raw + summary
+metrics: QPS, avg, p50/p90/p95/p99, max, status distribution, transport errors)
+and an offline HTML chart dashboard `test_reports/loadtest-dashboard.html`
+(no CDN, no JS — metric cards, status distribution, per-second throughput SVG
+and a latency histogram). The load test warms up with a few unmeasured requests
+and retries transient transport-level failures (connect/reset/timeout) twice,
+so only requests that still fail after retry are counted as `failed`. It uses
+`HttpClient.sendAsync` in batches with `CompletableFuture.allOf().get()` for
+concurrency (pure Java blocking calls — safe on the GraalVM JS runtime, which
+rejects multi-threaded access to JS callbacks) and points the default trust
+store at `JsPlus/key/default_truststore.jks` for the self-signed 8443
+certificate.
+
+After the load test, `TestAll.bat` / `TestAll.sh` stop the standalone Tomcat
+and then run `StopAll` to shut down every remaining service (including H2), so
+the whole run leaves nothing behind. (TestAll.js exits via `System.exit(0)`
+directly instead of `ScriptConsole.exit()`, which would write the shared
+`JsPlus/.tmp/exit.tmp` signal file and take the H2 ghost — and any other JsPlus
+JVM watching that file — down with it.)
 
 Every non-query case appends a `dbVerify` block: the executed `SELECT` statement
 and its result rows are rendered as an HTML table (with a `row num` column) in

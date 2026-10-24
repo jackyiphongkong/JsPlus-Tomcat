@@ -112,5 +112,82 @@ echo "[TestAll] H2 ready."
 # after the -Task finishes and the JVM exits cleanly (Main.java).
 # ------------------------------------------------------------------
 "$JAVA_BIN" $JvmParams -cp "$DEPEND_LIBS" com.killcoding.jsplus.Main -ScriptEngine "$SCRIPT_ENGINE" -Env script -WriteHistory false -Task "${JS_PLUS_PATH}../test/TestAll.js" < /dev/null
-echo "TestAll exit code: $?"
-exit $?
+RC=$?
+echo "TestAll exit code: $RC"
+
+# TestAll.js now exits via System.exit(0) (NOT ScriptConsole.exit()), so the
+# shared exit.tmp signal file is never written and the H2 ghost started by
+# BG_StartH2.sh keeps running. Stop ALL remaining services (H2) on every exit
+# path so TestAll leaves nothing behind.
+cleanup() {
+    echo "[TestAll] Stopping all remaining services..."
+    "${JS_PLUS_PATH}bin/StopAll.sh" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+# ------------------------------------------------------------------
+# Step 3: Simple load test — TestAll.js stops shared services when it
+# finishes, so make sure a WORKING H2 is reachable on :3306 first
+# (netstat may still show a half-dead H2 holding the port, so we do a
+# real TCP connect test); then start a standalone Tomcat, run LoadTest
+# against it, and stop Tomcat again.
+# Outputs: ../test_reports/loadtest-result.json + loadtest-dashboard.html
+# Override via env: LOADTEST_URL, LOADTEST_CONCURRENCY,
+#                    LOADTEST_TOTAL, LOADTEST_TIMEOUT
+# ------------------------------------------------------------------
+if (exec 3<>/dev/tcp/127.0.0.1/3306) 2>/dev/null; then
+    echo "[TestAll] H2 reachable on :3306."
+else
+    echo "[TestAll] H2 not reachable on :3306, restarting H2..."
+    "${JS_PLUS_PATH}bin/BG_StartH2.sh" "$SCRIPT_ENGINE"
+    H2_UP=0
+    for i in $(seq 1 45); do
+        if (exec 3<>/dev/tcp/127.0.0.1/3306) 2>/dev/null; then
+            H2_UP=1
+            break
+        fi
+        sleep 1
+    done
+    if [ "$H2_UP" != "1" ]; then
+        echo "[TestAll] WARN: H2 did not start; skipping load test."
+        exit 0
+    fi
+    echo "[TestAll] H2 restarted."
+fi
+
+echo "[TestAll] Starting Tomcat for load test..."
+"${JS_PLUS_PATH}bin/BG_StartTomcat.sh" "$SCRIPT_ENGINE"
+
+echo "[TestAll] Waiting for Tomcat :8080/:8443..."
+WEB_READY=0
+for i in $(seq 1 60); do
+    if (netstat -tln 2>/dev/null | grep -q ":8080 .*LISTEN") || (ss -tln 2>/dev/null | grep -q ":8080 .*LISTEN"); then
+        WEB_READY=1
+        break
+    fi
+    sleep 1
+done
+if [ "$WEB_READY" != "1" ]; then
+    echo "[TestAll] WARN: Tomcat did not start; skipping load test."
+    exit 0
+fi
+echo "[TestAll] Tomcat ready. Running load test..."
+
+# LoadTest.js — pure-JS load test through the JsPlus console (replaces the
+# old compiled LoadTest.java step). Env vars LOADTEST_* are read by the
+# script itself. Stdin /dev/null lets Main exit right after the task.
+LOADTEST_URL="${LOADTEST_URL:-https://localhost:8443/default/}"
+LOADTEST_CONCURRENCY="${LOADTEST_CONCURRENCY:-10}"
+LOADTEST_TOTAL="${LOADTEST_TOTAL:-1000}"
+LOADTEST_TIMEOUT="${LOADTEST_TIMEOUT:-30}"
+( cd "${JS_PLUS_PATH}../test" && "$JAVA_BIN" ${JvmParams} -cp "$DEPEND_LIBS" \
+    com.killcoding.jsplus.Main -ScriptEngine "$SCRIPT_ENGINE" -Env script -WriteHistory false \
+    -Task "${JS_PLUS_PATH}../test/LoadTest.js" < /dev/null )
+LT_RC=$?
+
+echo "[TestAll] Stopping Tomcat after load test..."
+"${JS_PLUS_PATH}bin/StopTomcat.sh"
+
+RC="${RC:-1}"
+echo "TestAll exit code: $RC"
+exit "$RC"

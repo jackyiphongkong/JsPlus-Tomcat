@@ -300,7 +300,7 @@ JsPlus/bin/StartTomcat.sh      # Windows 請用 StartTomcat.bat
 |---|---|---|
 | `port` | `${TOMCAT_PORT}` (8080) | HTTP connector 埠 |
 | `sslPort` | `8443` | HTTPS connector 埠 |
-| `Webapp.contextPath[n]` / `Webapp.appBase[n]` | `/` → `webapps/trade/` | webapp 部署設定 |
+| `Webapp.contextPath[n]` / `Webapp.appBase[n]` | `/` → `webapps/default/` | webapp 部署設定 |
 | `maxThreads` / `maxPostSize` / `maxSavePostSize` | `1000` / `200MB` | connector 限制 |
 | `connectionTimeout` / `keepAliveTimeout` | `300000` | connector 逾時（毫秒） |
 | `reloadable` | `true` | 已部署 webapp 的熱載入 |
@@ -697,7 +697,7 @@ shell/bat 啟動器會將命令列選項傳遞至 JsPlus 主類別（`com.killco
 | `TestTomcatServer.js` | 34 個案例——經 `tomcat` 主控台入口（`TomcatEmbed.js`）執行 TomcatServer 行為測試：`addSslHost`＋清理、`Webapp.contextPath`／`Webapp.appBase` 組態契約（含舊鍵回歸防護）、`SSL.*` 區塊、keystore 就緒狀態（JKS＋alias＋信任錨）、唯讀行為冒煙測試（`getTomcat`／`queryDomainSslHosts`／`loadDomainSslHosts`）、DomainSslHost CRUD 及 HTTP/2 契約（`Http2.enable=true` 組態＋純文字連接埠即時 h2c 握手）——每次 API 呼叫均記錄 `{code, msg}` 返回值，DB 寫入附 `dbVerify`（`SELECT *`）驗證＋清理 |
 
 執行全部測試的一鍵流程（停止服務 → DB 初始化 → H2 → 內嵌 Tomcat →
-108 項檢查 → `test_reports/`）：
+108 項檢查 → 對獨立 Tomcat 進行壓力測試 → `test_reports/`）：
 
 - Windows：`test\TestAll.bat`
 - Linux：`test/TestAll.sh`
@@ -745,6 +745,26 @@ Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestTomcatServer.js');
 `test_reports/TestIpFilter-Report.html`、
 `test_reports/TestIpAttackDefense-Report.html` 及
 `test_reports/TestTomcatServer-Report.html`。
+
+`TestAll.bat`／`TestAll.sh` 的 Step 3 其後會啟動獨立 Tomcat 並執行內建的
+壓力測試（`test/LoadTest.js`，透過 JsPlus 主控台執行的純 JS 移植版，無需
+另行編譯 Java；預設：`https://localhost:8443/default/`、10 並發 × 1000 請求、
+30 秒逾時；可透過 `LOADTEST_URL`／`LOADTEST_CONCURRENCY`／`LOADTEST_TOTAL`／
+`LOADTEST_TIMEOUT` 覆寫），並寫入 `test_reports/loadtest-result.json`（原始及
+摘要指標：QPS、平均、p50/p90/p95/p99、最大值、狀態碼分佈、傳輸層錯誤）及
+離線 HTML 圖表盤 `test_reports/loadtest-dashboard.html`（無 CDN、無
+JavaScript——指標卡片、狀態碼分佈、每秒吞吐 SVG 及延遲直方圖）。壓力測試
+會先以少量未計入統計的請求暖機，並對短暫的傳輸層錯誤（連線／重設／逾時）
+重試兩次，重試後仍失敗才計入 `failed`。並發採用 `HttpClient.sendAsync`
+批次發送 ＋ `CompletableFuture.allOf().get()`（純 Java 阻塞呼叫——在
+GraalVM JS 執行環境中安全，該環境會拒絕以多線程方式存取 JS 回呼），並將
+預設信任儲存指向 `JsPlus/key/default_truststore.jks` 以信任 8443 的自簽憑證。
+
+壓力測試完成後，`TestAll.bat`／`TestAll.sh` 會先停止獨立 Tomcat，再執行
+`StopAll` 關閉所有其餘服務（包括 H2），確保整個流程結束後不留任何程序。
+（`TestAll.js` 改為直接以 `System.exit(0)` 退出，而非 `ScriptConsole.exit()`，
+因後者會寫入共用的 `JsPlus/.tmp/exit.tmp` 信號檔，令監察該檔的 H2 ghost——
+以及其他所有 JsPlus JVM——一併關閉。）
 
 每個非查詢案例會附加 `dbVerify` 區塊：以黃色小字顯示所執行的 `SELECT`
 語句，並將結果列以 HTML 表格（含 `row num` 欄）呈現，方便測試人員直接

@@ -42,7 +42,7 @@ call set "JvmParams=%%%JvmParamsName%%%"
 echo "%JvmParamsName%"
 
 if "%JvmParams%"=="" (
-    SET "JvmParams=-Xms1024m -Xmx1024m -Xss256k"
+    SET "JvmParams=-Xms128m -Xmx2048m -Xss256k"
     echo WARN: Missing %JvmParamsName% then using default params
 ) else (
     echo Using System Env JVM Params
