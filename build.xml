@@ -1,26 +1,116 @@
 <?xml version="1.0" ?>
 <project name="JsPlus-Tomcat" default="build" basedir=".">
 	<property environment="env" />
-	<property name="jr.version" value="6.0.0" />
 	<property name="jr.charset" value="UTF-8" />
 	<property name="jr.root" location="./" />
 	<property name="jr.src" value="${jr.root}/src" />
 	<property name="jr.lib" value="${jr.root}/LibHome/" />
 	<property name="jr.build" value="${jr.root}/build/" />
 	<property name="jr.classes" value="${jr.build}/classes" />
+	<property name="jr.tomcatserver" value="${jr.src}/com/killcoding/jsplus/tomcat/TomcatServer.java" />
+
+	<!-- build/version.properties keeps the build version across builds
+	     (automatic memory: patch is incremented by 1 on every ant build).
+	     The three keys are created once on the first build, then jr.patch
+	     is bumped; jr.major / jr.minor are only changed by hand. -->
+	<condition property="jr.version.file.exists">
+		<available file="${jr.root}/version.properties" />
+	</condition>
 
 	<path id="classpath">
 		<fileset dir="${jr.lib}">
 			<include name="**/*.jar" />
 		</fileset>
 	</path>
-	
+
+	<target name="version-init" unless="jr.version.file.exists">
+		<mkdir dir="${jr.build}" />
+		<propertyfile file="${jr.root}/version.properties">
+			<entry key="jr.major" type="int" default="0" />
+			<entry key="jr.minor" type="int" default="0" />
+			<entry key="jr.patch" type="int" default="0" />
+		</propertyfile>
+	</target>
+
+	<!-- Standard semver: jr.version = major.minor.patch, patch +1 every build.
+	     Each segment is capped at 999; 999 + 1 carries into the next higher
+	     segment (0.0.999 + 1 -> 0.1.0, 0.9.999 + 1 -> 1.0.0). NOTE: ant's
+	     propertyfile formats ints with the locale (1000 -> "1,000"), which
+	     would corrupt the file, so we never write a value of 1000: we check
+	     for 999 first and carry directly. ant 1.9's propertyfile task has no
+	     "if" attribute, so the bump is split into mutually exclusive targets
+	     using target-level if/unless. -->
+	<target name="version-flags" depends="version-init">
+		<loadproperties srcFile="${jr.root}/version.properties" />
+		<condition property="jr.patch.max">
+			<matches string="${jr.patch}" pattern="999" />
+		</condition>
+		<condition property="jr.minor.max">
+			<matches string="${jr.minor}" pattern="999" />
+		</condition>
+		<condition property="jr.carry.major">
+			<and>
+				<matches string="${jr.patch}" pattern="999" />
+				<matches string="${jr.minor}" pattern="999" />
+			</and>
+		</condition>
+	</target>
+
+	<!-- case A: patch < 999 -> patch +1 -->
+	<target name="bump-case-a" depends="version-flags" unless="jr.patch.max">
+		<propertyfile file="${jr.root}/version.properties">
+			<entry key="jr.patch" type="int" default="${jr.patch}" operation="+" />
+		</propertyfile>
+	</target>
+
+	<!-- case B: patch=999 and minor < 999 -> patch=0, minor+1 -->
+	<target name="bump-case-b" depends="version-flags" if="jr.patch.max" unless="jr.carry.major">
+		<propertyfile file="${jr.root}/version.properties">
+			<entry key="jr.patch" type="int" value="0" />
+			<entry key="jr.minor" type="int" default="${jr.minor}" operation="+" />
+		</propertyfile>
+	</target>
+
+	<!-- case C: patch=999 and minor=999 -> patch=0, minor=0, major+1 -->
+	<target name="bump-case-c" depends="version-flags" if="jr.carry.major">
+		<propertyfile file="${jr.root}/version.properties">
+			<entry key="jr.patch" type="int" value="0" />
+			<entry key="jr.minor" type="int" value="0" />
+			<entry key="jr.major" type="int" default="${jr.major}" operation="+" />
+		</propertyfile>
+	</target>
+
+	<target name="version-final" depends="bump-case-a,bump-case-b,bump-case-c">
+		<loadproperties srcFile="${jr.root}/version.properties" />
+		<property name="jr.version" value="${jr.major}.${jr.minor}.${jr.patch}" />
+		<tstamp>
+			<format property="jr.builddate" pattern="yyyy.MM.dd" />
+		</tstamp>
+		<echo message="Build version bumped to ${jr.version}" />
+	</target>
+
+	<target name="version-bump" depends="version-final" />
+
+	<!-- Replace the ${BuildVersion.VERSION}(${BuildVersion.BUILD_DATE})
+	     placeholders in TomcatServer.java with the real build values before
+	     compilation. The regex first restores the placeholder in case a
+	     previous build stopped before restoring it. -->
+	<target name="replace-version" depends="version-bump">
+		<replaceregexp file="${jr.tomcatserver}"
+			match="[0-9]+\.[0-9]+\.[0-9]+ ?\([0-9]{4}\.[0-9]{2}\.[0-9]{2}\)"
+			replace="${BuildVersion.VERSION}(${BuildVersion.BUILD_DATE})" byline="true" />
+		<replace file="${jr.tomcatserver}"
+			token="${BuildVersion.VERSION}(${BuildVersion.BUILD_DATE})"
+			value="${jr.version}(${jr.builddate})" />
+		<echo message="Replaced version placeholder with ${jr.version}(${jr.builddate}) in TomcatServer.java" />
+	</target>
+
     <target name="clear">
 		<delete dir="${jr.classes}" />
 		<mkdir dir="${jr.classes}" />
 	</target>
-	
-    <target name="compile" depends="clear">
+
+    <target name="compile" depends="clear,replace-version">
 		<javac debug="true"  destdir="${jr.classes}" encoding="${jr.charset}" nowarn="true" includeantruntime="false">
 			<src>
 				<pathelement location="${jr.src}" />
@@ -34,6 +124,14 @@
 				<exclude name="**/*.java" />
 			</fileset>
 		</copy>
+
+		<!-- Restore the placeholders in TomcatServer.java immediately after
+		     compilation, so the source always stays in placeholder form even
+		     when only the compile target is run. -->
+		<replaceregexp file="${jr.tomcatserver}"
+			match="[0-9]+\.[0-9]+\.[0-9]+ ?\([0-9]{4}\.[0-9]{2}\.[0-9]{2}\)"
+			replace="${BuildVersion.VERSION}(${BuildVersion.BUILD_DATE})" byline="true" />
+		<echo message="Restored version placeholder in TomcatServer.java" />
 	</target>
 
 
@@ -43,8 +141,16 @@
 	        <fileset dir="${jr.lib}" includes="*.jar"/>
 	      </classpath>
 	    </manifestclasspath>
-		
-		<jar jarfile="${jr.lib}/jsplus/default/jsplus-tomcat.jar" >
+
+		<!-- Remove the previous build's jar so the classpath never contains
+		     two jsplus-tomcat jars at once (only our own jar is matched). -->
+		<delete>
+			<fileset dir="${jr.lib}/jsplus/default">
+				<include name="jsplus-tomcat-*.jar" />
+			</fileset>
+		</delete>
+
+		<jar jarfile="${jr.lib}/jsplus/default/jsplus-tomcat-${jr.version}.jar" >
 			<fileset dir="${jr.classes}">
 				<include name="com/**/**/*" />
 				<include name="org/**/**/*" />
@@ -55,6 +161,7 @@
 			<!--	<attribute name="Class-Path" value="${jar.classpath}"/>-->
 			<!--</manifest>-->
 		</jar>
+		<echo message="Packaged jsplus-tomcat-${jr.version}.jar" />
 	</target>
 	<target name="build">
 		<ant target="package" />
