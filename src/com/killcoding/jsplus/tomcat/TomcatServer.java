@@ -49,7 +49,7 @@ import org.apache.catalina.Wrapper;
 
 public class TomcatServer {
 
-	public final static String VERSION = "7.0.0(2026.10.02) - Source 'apache-tomcat-11.0.1-embed.zip'";
+	public final static String VERSION = "${BuildVersion.VERSION}(${BuildVersion.BUILD_DATE})";
 
 	public final static String TOMCAT_HOME_KEY = "TOMCAT_HOME";
 
