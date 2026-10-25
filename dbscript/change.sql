@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS domain_auth (
     auth_enable     BOOLEAN,               -- Auth switch: true = enable Basic Auth for this domain:port
     encrypt_mode    VARCHAR(100),          -- Encryption mode (e.g. AES)
     encrypt_key     VARCHAR(300),          -- AES encryption key
+    max_attempts    INT DEFAULT 5,         -- Max consecutive failed logins before lockout
+    lock_minutes    INT DEFAULT 30,        -- Lock duration in minutes (auto-unlock after expiry)
     created_at      TIMESTAMP,             -- Creation time
     updated_at      TIMESTAMP,             -- Last update time
     deleted_at      TIMESTAMP,             -- Soft-delete time (NULL when active)
@@ -64,6 +66,8 @@ CREATE TABLE IF NOT EXISTS domain_auth_user (
     domain_auth_id  CHAR(16),              -- FK (logical): owning domain_auth.id
     username        VARCHAR(200),          -- Username
     encrypt_pass    VARCHAR(500),          -- AES-encrypted password (never plain text)
+    failed_attempts INT DEFAULT 0,         -- Consecutive failed login counter
+    locked_until    TIMESTAMP,             -- Lockout expiry (NULL = not locked); auto-unlock when reached
     created_at      TIMESTAMP,             -- Creation time
     updated_at      TIMESTAMP,             -- Last update time
     deleted_at      TIMESTAMP,             -- Soft-delete time (NULL when active)
@@ -208,3 +212,14 @@ CREATE TABLE IF NOT EXISTS ip_ban (
     deleted_at          TIMESTAMP,             -- Soft-delete time (set when unbanned)
     deleted             BOOLEAN                -- Soft-delete flag: false=banned, true=unbanned
 );
+
+-- ============================================================================
+-- Migration: auth account-lockout columns (idempotent, safe to re-run)
+-- Existing databases that were created before the lockout feature get the new
+-- columns here; fresh installs already have them in the CREATE statements.
+-- H2 supports "ADD COLUMN IF NOT EXISTS" (1.4.197+).
+-- ============================================================================
+ALTER TABLE domain_auth ADD COLUMN IF NOT EXISTS max_attempts INT DEFAULT 5;
+ALTER TABLE domain_auth ADD COLUMN IF NOT EXISTS lock_minutes INT DEFAULT 30;
+ALTER TABLE domain_auth_user ADD COLUMN IF NOT EXISTS failed_attempts INT DEFAULT 0;
+ALTER TABLE domain_auth_user ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP;

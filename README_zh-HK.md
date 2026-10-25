@@ -208,6 +208,32 @@ ant.bat
 `ant.sh`（Linux/macOS）／`ant.bat`（Windows）會從腳本旁的 `Java/default/` 與 `ant/default/`
 解析 `JAVA_HOME` 與 `ANT_HOME`；若捆綁副本缺失，會回退至系統 `JAVA_HOME`／`ANT_HOME`（或 PATH）。
 
+每次成功建置都會遞增建置版本（`version.properties` — `jr.major.minor.patch`，
+每次建置 patch +1），並在專案根目錄的 `changes.log`（英文）及
+`changes_zh-HK.log`（繁體中文）各附加一行歷史記錄：
+
+```
+v<版本>  <建置時間>  <備註>
+```
+
+傳入 `-Dchange.note="..."`（例如 `ant -Dchange.note="add auth lockout"`）即可在該行記錄簡短說明。
+標頭僅在首次建置時寫入。
+
+每次建置後會將 `src/` 的 Java 原始碼（唯讀）與 Git 鏡像 `D:/Githubrepos/JsPlus-Tomcat/src`
+進行差異比對。若發現差異，會向 `changes.log` 及 `changes_zh-HK.log` 各附加一筆臨時記錄：
+
+```
+found diffed: <N> java file(s) (<timestamp>)      （英文）/ 偵測到差異：…（繁中）
+  DIFF: <相對路徑>                  （兩邊皆存在，內容不同）
+  MISSING in Githubrepos: <路徑>     （僅存在於 Working 目錄）
+  MISSING in Working: <路徑>         （僅存在於 Git 鏡像）
+```
+
+比對過程為唯讀——不會自動複製或提交任何檔案；該記錄是提示開發者審查並
+協調兩個目錄的差異。當出現 `found diffed` 記錄時，助手會自動分析差異，並
+附加一則人話說明（英文寫入 `changes.log`，繁體中文寫入 `changes_zh-HK.log`），
+解釋哪個目錄領先、檔案為何不同、以及如何協調。
+
 ---
 
 ## 快速開始
@@ -221,7 +247,7 @@ ant.bat
 > 2. 複製 `dbscript/change.sql` 的內容，貼入主控台執行（或輸入 `RUNSCRIPT FROM '<change.sql 完整路徑>';`）。
 
 ```sh
-# 1. 啟動 H2 資料庫伺服器（預設 TCP 埠 3306，見 Appenv.properties）
+# 1. 啟動 H2 資料庫伺服器（預設 TCP 埠 3307，見 Appenv.properties）
 JsPlus/bin/StartH2.sh          # Windows 請用 StartH2.bat
 
 # 2. 啟動內嵌 Tomcat（預設 HTTP 8080 / HTTPS 8443）
@@ -353,7 +379,7 @@ JsPlus/bin/StartTomcat.sh      # Windows 請用 StartTomcat.bat
 
 ### `JsPlus/config/Appenv.properties`
 
-可覆寫的環境變數值，例如 `TOMCAT_PORT`、`H2_PORT`（預設 `3306`，可用 `JsPlus_H2_PORT`
+可覆寫的環境變數值，例如 `TOMCAT_PORT`、`H2_PORT`（預設 `3307`，可用 `JsPlus_H2_PORT`
 覆寫），以及應用程式使用的各種 `Custom_*` / `Env_*` 金鑰。
 
 ### `JsPlus/config/DataSource.properties`
@@ -459,6 +485,22 @@ tomcat.createDomainAuthUser('127.0.0.1', '8443', 'Sample', 'password');
 管理 API：`updateDomainAuth`、`removeDomainAuth`、`queryDomainAuth(s)`、
 `createDomainAuthUser`、`updateDomainAuthUser`、`removeDomainAuthUser`、`queryDomainAuthUser(s)`。
 密碼以 AES 加密儲存，並以按網域的 `encrypt_key` 進行驗證。
+
+**帳號鎖定（Account lockout）。** 每筆 `domain_auth` 記錄皆帶鎖定政策
+（`max_attempts` = 連續錯誤密碼上限，`lock_minutes` = 鎖定時長）；每筆
+`domain_auth_user` 記錄則帶按帳號的狀態（`failed_attempts`、`locked_until`）。
+錯誤密碼會累積計數；當 `failed_attempts` 達到 `max_attempts`，帳號即鎖定至
+`locked_until`，屆滿後於下一次嘗試**自動解鎖**（無需定時任務）。鎖定期間
+即使輸入正確密碼亦會回 `401`。登入成功會重設計數；更改使用者密碼亦會清除
+任何鎖定。額外 API：
+
+```js
+tomcat.setAuthLockPolicy('127.0.0.1', '8443', 5, 30);   // 最多 5 次失敗，鎖定 30 分鐘
+tomcat.unlockAuthUser('127.0.0.1', '8443', 'Sample');   // 手動解鎖
+```
+
+預設值為 `max_attempts=5`、`lock_minutes=30`（建表時設定；`dbscript/change.sql`
+內含冪等 `ALTER`，可為既有資料庫補上欄位）。
 
 ### IP 存取控制（`IpFilter`）
 
@@ -592,8 +634,10 @@ tomcat.clearIpRequestLogs();
 | `tomcat.queryDomainAuth(domain, port)` | 查詢單一驗證設定 |
 | `tomcat.queryDomainAuths()` | 查詢全部驗證設定 |
 | `tomcat.createDomainAuthUser(domain, port, username, plaintextPass)` | 建立使用者（密碼以 AES 加密） |
-| `tomcat.updateDomainAuthUser(domain, port, username, plaintextPass)` | 更新使用者密碼 |
+| `tomcat.updateDomainAuthUser(domain, port, username, plaintextPass)` | 更新使用者密碼（並清除任何鎖定） |
 | `tomcat.removeDomainAuthUser(domain, port, username)` | 移除使用者 |
+| `tomcat.setAuthLockPolicy(domain, port, maxAttempts, lockMinutes)` | 設定鎖定政策（錯誤密碼上限＋鎖定分鐘數） |
+| `tomcat.unlockAuthUser(domain, port, username)` | 手動解鎖使用者（清除 `failed_attempts`／`locked_until`） |
 
 ### 網域對應（`DomainProxy`）
 

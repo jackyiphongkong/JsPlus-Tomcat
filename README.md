@@ -213,6 +213,36 @@ ant.bat
 `ant/default/` next to the script, falling back to the system `JAVA_HOME` / `ANT_HOME` (or PATH)
 when the bundled copies are missing.
 
+Every successful build increments the build version (`version.properties` —
+`jr.major.minor.patch`, patch +1 per build) and appends one history line to
+`changes.log` (English) and `changes_zh-HK.log` (Traditional Chinese) at the
+project root:
+
+```
+v<version>  <build timestamp>  <note>
+```
+
+Pass `-Dchange.note="..."` (e.g. `ant -Dchange.note="add auth lockout"`) to record
+a short description on that line. The header is written on the first build only.
+
+After every build the java sources in `src/` are compared (read-only) against the
+Git mirror at `D:/Githubrepos/JsPlus-Tomcat/src`. When differences are found, a
+temporary entry is appended to both `changes.log` and `changes_zh-HK.log`:
+
+```
+found diffed: <N> java file(s) (<timestamp>)      (en) / 偵測到差異：…（zh-HK）
+  DIFF: <relative path>                  (exists in both, content differs)
+  MISSING in Githubrepos: <path>         (only in the Working tree)
+  MISSING in Working: <path>             (only in the Git mirror)
+```
+
+The comparison is read-only — nothing is copied or committed automatically; the
+entry is a signal for the developer to review and reconcile the two trees. When
+a `found diffed` entry appears, the assistant automatically analyzes the
+differences and appends a human-readable note (English in `changes.log`,
+Traditional Chinese in `changes_zh-HK.log`) explaining which tree is ahead, why
+the files differ, and what was done to reconcile them.
+
 ---
 
 ## Quick start
@@ -227,7 +257,7 @@ when the bundled copies are missing.
 >    `RUNSCRIPT FROM '<full path to change.sql>';`).
 
 ```sh
-# 1. Start the H2 database server (default TCP port 3306, see Appenv.properties)
+# 1. Start the H2 database server (default TCP port 3307, see Appenv.properties)
 JsPlus/bin/StartH2.sh          # or StartH2.bat on Windows
 
 # 2. Start the embedded Tomcat (default HTTP 8080 / HTTPS 8443)
@@ -362,7 +392,7 @@ how quickly a released console returns to the pool. A warning is logged when poo
 
 ### `JsPlus/config/Appenv.properties`
 
-Environment/overridable values such as `TOMCAT_PORT`, `H2_PORT` (default `3306`, override with
+Environment/overridable values such as `TOMCAT_PORT`, `H2_PORT` (default `3307`, override with
 `JsPlus_H2_PORT`) and various `Custom_*` / `Env_*` keys used by applications.
 
 ### `JsPlus/config/DataSource.properties`
@@ -468,6 +498,25 @@ tomcat.createDomainAuthUser('127.0.0.1', '8443', 'Sample', 'password');
 Management APIs: `updateDomainAuth`, `removeDomainAuth`, `queryDomainAuth(s)`,
 `createDomainAuthUser`, `updateDomainAuthUser`, `removeDomainAuthUser`, `queryDomainAuthUser(s)`.
 Passwords are stored AES-encrypted and verified against the per-domain `encrypt_key`.
+
+**Account lockout.** Each `domain_auth` row carries a lockout policy
+(`max_attempts` = consecutive wrong-password limit, `lock_minutes` = lock
+duration); each `domain_auth_user` row carries the per-account state
+(`failed_attempts`, `locked_until`). A wrong password increments the counter;
+when `failed_attempts` reaches `max_attempts` the account is locked until
+`locked_until`, after which it **auto-unlocks** on the next attempt (no timer
+job needed). While locked, even the correct password is rejected with `401`.
+A successful login resets the counter; changing a user's password also clears
+any lock. Extra APIs:
+
+```js
+tomcat.setAuthLockPolicy('127.0.0.1', '8443', 5, 30);   // max 5 fails, lock 30 min
+tomcat.unlockAuthUser('127.0.0.1', '8443', 'Sample');   // manual unlock
+```
+
+Defaults are `max_attempts=5`, `lock_minutes=30` (set at table creation; an
+idempotent `ALTER` in `dbscript/change.sql` adds the columns to existing
+databases).
 
 ### IP access control (`IpFilter`)
 
@@ -606,8 +655,10 @@ Each method prints the result (`resMap.msg`) to the console and returns it as a 
 | `tomcat.queryDomainAuth(domain, port)` | Show one auth config |
 | `tomcat.queryDomainAuths()` | Show all auth configs |
 | `tomcat.createDomainAuthUser(domain, port, username, plaintextPass)` | Create a user (password AES-encrypted) |
-| `tomcat.updateDomainAuthUser(domain, port, username, plaintextPass)` | Update a user's password |
+| `tomcat.updateDomainAuthUser(domain, port, username, plaintextPass)` | Update a user's password (clears any lock) |
 | `tomcat.removeDomainAuthUser(domain, port, username)` | Remove a user |
+| `tomcat.setAuthLockPolicy(domain, port, maxAttempts, lockMinutes)` | Set the lockout policy (wrong-password limit + lock minutes) |
+| `tomcat.unlockAuthUser(domain, port, username)` | Manually unlock a user (clears `failed_attempts` / `locked_until`) |
 
 ### Domain mappings (`DomainProxy`)
 

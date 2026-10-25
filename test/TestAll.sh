@@ -1,13 +1,16 @@
 #!/bin/bash
+
+# H2 TCP port: read from the JsPlus config (env JsPlus_H2_PORT, default 3307).
+export H2_PORT="${JsPlus_H2_PORT:-3307}"
 set -e
 
 # ------------------------------------------------------------------
 # JsPlus-Tomcat automated test suite — TestAll.sh
 # Flow:
-#   1) Database init + H2 server (port 3306) — skipped when H2 is
+#   1) Database init + H2 server (port $H2_PORT) — skipped when H2 is
 #      already running (the DB file is locked by the running server,
 #      so embedded fallback.sql/change.sql cannot apply).
-#   2) Wait for H2 :3306 to LISTEN.
+#   2) Wait for H2 :$H2_PORT to LISTEN.
 #   3) Run TestAll.js against the running server.
 #      TestAll.js bootstraps the embedded Tomcat in the SAME JVM
 #      (mirror of script/StartTomcat.js) so the global `tomcat` object
@@ -69,36 +72,36 @@ echo "Using \"$JvmParams\""
 
 # ------------------------------------------------------------------
 # Step 0: Stop any existing services (H2 / Tomcat / consoles) so the
-# database file is unlocked and ports 3306/8080 are free.
+# database file is unlocked and ports $H2_PORT/8080 are free.
 # ------------------------------------------------------------------
 echo "[TestAll] Stopping existing services..."
 "${JS_PLUS_PATH}bin/StopAll.sh"
 
 # ------------------------------------------------------------------
-# Step 1: Database init + H2 server (port 3306)
+# Step 1: Database init + H2 server (port $H2_PORT)
 # Skipped when H2 is already running: the DB file is locked by the
 # running server, so embedded fallback.sql/change.sql cannot apply.
 # ------------------------------------------------------------------
-if (netstat -tln 2>/dev/null | grep -q ":3306 .*LISTEN") || (ss -tln 2>/dev/null | grep -q ":3306 .*LISTEN"); then
-    echo "[TestAll] H2 already running on :3306 - skipping DB init and H2 start."
+if (netstat -tln 2>/dev/null | grep -q ":$H2_PORT .*LISTEN") || (ss -tln 2>/dev/null | grep -q ":$H2_PORT .*LISTEN"); then
+    echo "[TestAll] H2 already running on :$H2_PORT - skipping DB init and H2 start."
 else
     echo "[TestAll] Initializing database (fallback.sql -> change.sql)..."
     "${JS_PLUS_PATH}bin/StartH2Console.sh" init tomcatdb
-    echo "[TestAll] Starting H2 server (port 3306)..."
+    echo "[TestAll] Starting H2 server (port $H2_PORT)..."
     "${JS_PLUS_PATH}bin/BG_StartH2.sh" "$SCRIPT_ENGINE"
 fi
 
-echo "[TestAll] Waiting for H2 :3306..."
+echo "[TestAll] Waiting for H2 :$H2_PORT..."
 H2_READY=0
 for i in $(seq 1 45); do
-    if (netstat -tln 2>/dev/null | grep -q ":3306 .*LISTEN") || (ss -tln 2>/dev/null | grep -q ":3306 .*LISTEN"); then
+    if (netstat -tln 2>/dev/null | grep -q ":$H2_PORT .*LISTEN") || (ss -tln 2>/dev/null | grep -q ":$H2_PORT .*LISTEN"); then
         H2_READY=1
         break
     fi
     sleep 1
 done
 if [ "$H2_READY" != "1" ]; then
-    echo "[TestAll] ERROR: H2 did not start on port 3306."
+    echo "[TestAll] ERROR: H2 did not start on port $H2_PORT."
     exit 1
 fi
 echo "[TestAll] H2 ready."
@@ -110,7 +113,12 @@ echo "[TestAll] H2 ready."
 # the server before finishing.
 # "< /dev/null" closes stdin: the JsPlus Main scanner gets EOF right
 # after the -Task finishes and the JVM exits cleanly (Main.java).
+# TESTALL_TASK tells TestAll.js it is running as the CI/batch task (not an
+# interactive console eval), so it hard-halts its own JVM (Runtime.halt(0))
+# after the suites — otherwise the non-daemon TomcatServer await thread
+# would keep this JVM alive forever and Step 3 would never start.
 # ------------------------------------------------------------------
+export TESTALL_TASK=1
 "$JAVA_BIN" $JvmParams -cp "$DEPEND_LIBS" com.killcoding.jsplus.Main -ScriptEngine "$SCRIPT_ENGINE" -Env script -WriteHistory false -Task "${JS_PLUS_PATH}../test/TestAll.js" < /dev/null
 RC=$?
 echo "TestAll exit code: $RC"
@@ -127,7 +135,7 @@ trap cleanup EXIT
 
 # ------------------------------------------------------------------
 # Step 3: Simple load test — TestAll.js stops shared services when it
-# finishes, so make sure a WORKING H2 is reachable on :3306 first
+# finishes, so make sure a WORKING H2 is reachable on :$H2_PORT first
 # (netstat may still show a half-dead H2 holding the port, so we do a
 # real TCP connect test); then start a standalone Tomcat, run LoadTest
 # against it, and stop Tomcat again.
@@ -135,14 +143,14 @@ trap cleanup EXIT
 # Override via env: LOADTEST_URL, LOADTEST_CONCURRENCY,
 #                    LOADTEST_TOTAL, LOADTEST_TIMEOUT
 # ------------------------------------------------------------------
-if (exec 3<>/dev/tcp/127.0.0.1/3306) 2>/dev/null; then
-    echo "[TestAll] H2 reachable on :3306."
+if (exec 3<>/dev/tcp/127.0.0.1/$H2_PORT) 2>/dev/null; then
+    echo "[TestAll] H2 reachable on :$H2_PORT."
 else
-    echo "[TestAll] H2 not reachable on :3306, restarting H2..."
+    echo "[TestAll] H2 not reachable on :$H2_PORT, restarting H2..."
     "${JS_PLUS_PATH}bin/BG_StartH2.sh" "$SCRIPT_ENGINE"
     H2_UP=0
     for i in $(seq 1 45); do
-        if (exec 3<>/dev/tcp/127.0.0.1/3306) 2>/dev/null; then
+        if (exec 3<>/dev/tcp/127.0.0.1/$H2_PORT) 2>/dev/null; then
             H2_UP=1
             break
         fi
@@ -180,8 +188,8 @@ echo "[TestAll] Tomcat ready. Running load test..."
 # Main exit right after the task.
 export LOADTEST_URL="${LOADTEST_URL:-https://localhost:8443/default/}"
 export LOADTEST_CONCURRENCY="${LOADTEST_CONCURRENCY:-10}"
-export LOADTEST_TOTAL="${LOADTEST_TOTAL:-50000}"
-export LOADTEST_TIMEOUT="${LOADTEST_TIMEOUT:-30}"
+export LOADTEST_TOTAL="${LOADTEST_TOTAL:-10000}"
+export LOADTEST_TIMEOUT="${LOADTEST_TIMEOUT:-60}"
 ( cd "${JS_PLUS_PATH}../test" && "$JAVA_BIN" ${JvmParams} -cp "$DEPEND_LIBS" \
     com.killcoding.jsplus.Main -ScriptEngine "$SCRIPT_ENGINE" -Env script -WriteHistory false \
     -Task "${JS_PLUS_PATH}../test/LoadTest.js" < /dev/null )

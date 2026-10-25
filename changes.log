@@ -1,0 +1,81 @@
+﻿# JsPlus-Tomcat build history
+# Format: version  timestamp  note
+#
+v8.0.22  2026-10-25 11:46:04  
+v8.0.23  2026-10-25 11:47:09  
+v8.0.24  2026-10-25 12:52:57  
+found diffed: 1 java file(s) (2026-10-25 12:52:58)
+  DIFF: com\killcoding\jsplus\tomcat\SecurityFilter.java
+# Human-readable diff note (auto-detected)
+# SecurityFilter.java — the Working tree is AHEAD of the Git mirror:
+#   * Working: 40,644 bytes, 214 extra lines — account lockout
+#     (failed_attempts / locked_until); failed auth attempts are no
+#     longer cached.
+#   * Git mirror: 30,889 bytes; its 4 unique lines are the old
+#     always-cache logic, refactored into "cache successes only".
+#   * Action: reconciled — Working copy synced to the Git mirror
+#     (SHA-256 verified); no commit made. Later builds: no differences.
+#
+v8.0.25  2026-10-25 12:54:18  
+v8.0.26  2026-10-25 13:00:37  
+v8.0.27  2026-10-25 15:59:02  
+v8.0.28  2026-10-25 15:59:47  
+found diffed: 8 java file(s) (2026-10-25 15:59:48)
+  DIFF: com\killcoding\jsplus\tomcat\Db.java
+  DIFF: com\killcoding\jsplus\tomcat\DomainProxy.java
+  DIFF: com\killcoding\jsplus\tomcat\IpAttackDefense.java
+  DIFF: com\killcoding\jsplus\tomcat\IpFilter.java
+  DIFF: com\killcoding\jsplus\tomcat\SecurityFilter.java
+  DIFF: com\killcoding\jsplus\tomcat\ServerLog.java
+  DIFF: com\killcoding\jsplus\tomcat\TomcatScriptConsole.java
+  DIFF: com\killcoding\jsplus\tomcat\TomcatServer.java
+# Human-readable diff note (auto-detected)
+# All 8 java sources gained the jsplus-core MIT license header
+# (Copyright (c) 2024 KILLCODING.COM); the Git mirror had no headers.
+#   * Action: reconciled — all 8 Working sources synced to the Git mirror
+#     (SHA-256 verified); no commit made.
+#
+v8.0.29  2026-10-25 16:02:40  
+v8.0.30  2026-10-25 21:12:31  
+found diffed: 1 java file(s) (2026-10-25 21:12:32)
+  DIFF: com\killcoding\jsplus\tomcat\TomcatScriptConsole.java
+v8.0.31  2026-10-25 21:15:38  
+found diffed: 1 java file(s) (2026-10-25 21:15:39)
+  DIFF: com\killcoding\jsplus\tomcat\TomcatScriptConsole.java
+v8.0.34  2026-10-25 22:07:42  
+found diffed: 1 java file(s) (2026-10-25 22:07:42)
+  DIFF: com\killcoding\jsplus\tomcat\TomcatScriptConsole.java
+# Human-readable diff note (auto-detected)
+# TomcatScriptConsole.java — B1 fix (thread leak) landed; the Git mirror is
+# still one diff behind (sync deferred until the fix is confirmed stable):
+#   * freed(): the per-call Executors.newSingleThreadExecutor().execute(...)
+#     (one resident thread leaked per freed() call) is replaced by a shared
+#     static daemon ScheduledExecutorService (FREED_SCHEDULER). The console is
+#     still returned after freedDelayMs, but the return runs on a pooled
+#     "jsplus-tomcat-console-freed-N" thread — no thread is created per call
+#     and the pool never blocks JVM exit.
+#   * Proof (logs/app/20261025.log): paired "Console freed scheduled" ->
+#     "Console returned to pool" entries, return thread = jsplus-tomcat-console-freed.
+#
+# 2026-10-25 (manual update) — TestFreed suite + verification
+# [NEW] test/TestFreed.js — console-pool freed() test suite (6 checks):
+#   F1 env ready; F2 setDomainMapping 127.0.0.1:8443 uri=/ mode=Forward
+#     target=https://killcoding.com scriptEnable=true scriptFile=sample.js
+#     (Loaded path, sample.js exists) + dbVerify; F3 live curl through the
+#     mapping (usage before/after baseline); F4 sustained freed() proof:
+#     TESTFREED_TOTAL (default 1000) getDomainParams() cycles — asserts
+#     zero errors, maxUsage < 0.9, final usage back to baseline (no console
+#     leak, no "Full Console Pool"); F5 freed() on Loaded path; F6 cleanup.
+#   Registered as the 7th suite in TestAll.js.
+#   Stress result: 1000x usage stayed flat at 0.09 (no leak); no
+#   "Multi threaded access" (GraalVM JS thread-bound) and no
+#   "Full Console Pool" in logs/app/20261025.log.
+# [FIX] test/TestFreed.js envOr(): String(def) -> ("" + def) — the console
+#   environment may shadow the JS built-in String with java.lang.String
+#   (sample.js does `var String = Java.type('java.lang.String')`), turning
+#   String(x) into an unsupported "execute on java.lang.String" interop call
+#   (GraalVM: Message not supported). Same fix applied to F3 body snippet
+#   and F5 error capture.
+# [VERIFY] Full TestAll (7 suites): 123 passed, 0 failed. LoadTest:
+#   10000/10000 success, qps=258.6, avg=38ms, p50=37ms, p99=79ms, max=114ms.
+#

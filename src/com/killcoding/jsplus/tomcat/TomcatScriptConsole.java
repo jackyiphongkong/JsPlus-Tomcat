@@ -1,3 +1,26 @@
+/*******************************************************************************
+The MIT License (MIT)
+
+Copyright (c) 2024 KILLCODING.COM
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+*****************************************************************************/
 package com.killcoding.jsplus.tomcat;
 
 import java.util.List;
@@ -12,6 +35,8 @@ import com.killcoding.jsplus.ScriptConsole;
 import com.killcoding.tool.ConfigProperties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.ArrayList;
 import java.util.stream.Collectors;
 
@@ -22,6 +47,16 @@ public class TomcatScriptConsole {
 	private static final Map<Integer, ScriptConsole> CONSOLES_POOL = new ConcurrentHashMap<Integer, ScriptConsole>();
 	private static final Map<Long, ScriptConsole> CONSOLES_USING_MARK = new ConcurrentHashMap<Long, ScriptConsole>();
 	private static final Map<Long, Integer> CONSOLES_THREAD_MARK = new ConcurrentHashMap<Long, Integer>();
+
+	/** Shared daemon scheduler for delayed console return (freed): fixed-size,
+	 *  non-leaking (never grows per call), and never blocks JVM exit. */
+	private static final ScheduledExecutorService FREED_SCHEDULER = Executors.newScheduledThreadPool(
+			Math.max(2, Runtime.getRuntime().availableProcessors()),
+			r -> {
+				Thread t = new Thread(r, "jsplus-tomcat-console-freed");
+				t.setDaemon(true);
+				return t;
+			});
 
 	private static int cacheSeconds = 60;
 
@@ -127,22 +162,28 @@ public class TomcatScriptConsole {
 			long tid = Thread.currentThread().getId();
 			final ScriptConsole sc = CONSOLES_USING_MARK.get(tid);
 			if (sc != null) {
-				Integer useIndex = CONSOLES_THREAD_MARK.get(tid);
+				final Integer useIndex = CONSOLES_THREAD_MARK.get(tid);
 				CONSOLES_THREAD_MARK.remove(tid);
 				CONSOLES_USING_MARK.remove(tid);
-				Executors.newSingleThreadExecutor().execute(new Runnable() {
-					@Override 
-					public void run(){
-						try{
-							Thread.sleep(getFreedDelayMs());
-						}catch(Exception e){
-							Logger.systemError(TomcatScriptConsole.class,e.getMessage(),e);
-						}finally{
+				// Delayed return: semantically identical to "sleep(freedDelayMs)
+				// then put back", but without spawning one thread per call and
+				// without occupying a pool thread during the delay.
+				long delayMs = getFreedDelayMs();
+				// log.info("Console freed scheduled: index={}, by={}, delay={}ms", useIndex,
+				// 		Thread.currentThread().getName(), delayMs);
+				FREED_SCHEDULER.schedule(new Runnable() {
+					@Override
+					public void run() {
+						try {
 							CONSOLES_POOL.put(useIndex, sc);
+							// log.info("Console returned to pool: index={}, by={}", useIndex,
+							// 		Thread.currentThread().getName());
+							log.info("After freed pool size: {}",list().size());
+						} catch (Exception e) {
+							log.info(e.getMessage(), e);
 						}
-						// Logger.systemInfo(TomcatScriptConsole.class, "After freed pool size: {}",list().size());
 					}
-				});
+				}, delayMs, TimeUnit.MILLISECONDS);
 			}
 		} catch (Exception e) {
 			log.error(e.getMessage(), e);

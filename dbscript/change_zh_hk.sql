@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS domain_auth (
     auth_enable     BOOLEAN,               -- 驗證開關：true=此 domain:port 啟用 Basic Auth
     encrypt_mode    VARCHAR(100),          -- 加密模式：例如 AES，用於密碼加密方式
     encrypt_key     VARCHAR(300),          -- 加密金鑰：AES 加解密用之金鑰
+    max_attempts    INT DEFAULT 5,         -- 連續登入失敗上限：達到後鎖定帳號
+    lock_minutes    INT DEFAULT 30,        -- 鎖定時長（分鐘）：到達後自動解鎖
     created_at      TIMESTAMP,             -- 建立時間
     updated_at      TIMESTAMP,             -- 最後更新時間
     deleted_at      TIMESTAMP,             -- 軟刪除時間（未刪除時為 NULL）
@@ -63,6 +65,8 @@ CREATE TABLE IF NOT EXISTS domain_auth_user (
     domain_auth_id  CHAR(16),              -- 關聯 domain_auth.id：所屬之驗證設定
     username        VARCHAR(200),          -- 使用者名稱
     encrypt_pass    VARCHAR(500),          -- 加密後之密碼（AES 加密，非明文）
+    failed_attempts INT DEFAULT 0,         -- 連續登入失敗計數
+    locked_until    TIMESTAMP,             -- 鎖定到期時間（NULL=未鎖定）；到達後自動解鎖
     created_at      TIMESTAMP,             -- 建立時間
     updated_at      TIMESTAMP,             -- 最後更新時間
     deleted_at      TIMESTAMP,             -- 軟刪除時間（未刪除時為 NULL）
@@ -191,3 +195,13 @@ CREATE TABLE IF NOT EXISTS ip_ban (
     deleted_at          TIMESTAMP,             -- 軟刪除時間（解封時填入）
     deleted             BOOLEAN                -- 軟刪除標記：false=封禁中，true=已解封
 );
+
+-- ============================================================================
+-- 遷移：帳號鎖定功能之新欄位（可重複執行，冪等）
+-- 舊有資料庫執行此段即可補上新欄位；全新安裝之資料庫在 CREATE 語句中已包含
+-- H2 支援 "ADD COLUMN IF NOT EXISTS"（1.4.197 以上）
+-- ============================================================================
+ALTER TABLE domain_auth ADD COLUMN IF NOT EXISTS max_attempts INT DEFAULT 5;
+ALTER TABLE domain_auth ADD COLUMN IF NOT EXISTS lock_minutes INT DEFAULT 30;
+ALTER TABLE domain_auth_user ADD COLUMN IF NOT EXISTS failed_attempts INT DEFAULT 0;
+ALTER TABLE domain_auth_user ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP;

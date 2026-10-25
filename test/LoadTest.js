@@ -122,12 +122,19 @@ function main() {
         .build();
 
     // --- warm-up: a few unmeasured requests so SSL session + DB pools are
-    // ready before the measured run ---
+    // ready before the measured run. Async + bounded wait so a hung upstream
+    // can never stall the whole run for 5x request timeout. ---
+    var warmDeadline = System.nanoTime() + Math.min(timeoutSec, 10) * 1000000000;
     for (var w = 0; w < Math.min(5, total); w++) {
         try {
-            client.send(request, HttpResponse.BodyHandlers.ofString());
+            var wf = client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+            wf.get(5, TimeUnit.SECONDS);
         } catch (e) {
             // warm-up failures are not counted
+        }
+        if (System.nanoTime() > warmDeadline) {
+            print("[LoadTest] warm-up budget exceeded, starting measured run anyway");
+            break;
         }
     }
 
@@ -137,7 +144,11 @@ function main() {
     // (connect/reset/timeout) are transient under concurrency; retry twice
     // synchronously before counting the request as failed. Any HTTP response
     // counts as success. ---
+    // OVERALL BUDGET: the measured run hard-stops after `timeoutSec` seconds
+    // (measured from the first request) so a hung upstream can never block
+    // TestAll's Step 3 indefinitely — results so far are still written out.
     var startAtomic = new AtomicLong(System.nanoTime());
+    var deadlineNanos = System.nanoTime() + timeoutSec * 1000000000;
     var list = [];           // {status, latencyMs, doneAtSec, error?}
     var sent = 0;
     var timedOut = false;
@@ -145,7 +156,7 @@ function main() {
 
     function record(entry) { list.push(entry); }
 
-    while (sent < total) {
+    while (sent < total && System.nanoTime() < deadlineNanos) {
         var n = Math.min(inFlight, total - sent);
         var batch = [];
         var t0s = [];
@@ -154,14 +165,20 @@ function main() {
             batch.push(client.sendAsync(request, HttpResponse.BodyHandlers.ofString()));
         }
         var allFut = CompletableFuture.allOf(Java.to(batch, "java.util.concurrent.CompletableFuture[]"));
+        var remainMs = Math.max(1000, (deadlineNanos - System.nanoTime()) / 1000000);
         try {
-            allFut.get(timeoutSec, TimeUnit.SECONDS);
+            allFut.get(Math.round(Math.min(timeoutSec * 1000, remainMs)), TimeUnit.MILLISECONDS);
         } catch (e) {
             timedOut = true;
             // any futures that are not done yet stay unresolved; their .get()
             // below will throw (or block until their own request timeout).
         }
         for (var j = 0; j < batch.length; j++) {
+            if (System.nanoTime() > deadlineNanos) {
+                record({ status: 0, latencyMs: 0, doneAtSec: (System.nanoTime() - startAtomic.get()) / 1000000000,
+                         error: "overall budget exceeded" });
+                continue;
+            }
             var status = 0, err = null;
             for (var attempt = 0; attempt < 3; attempt++) {
                 try {
@@ -199,6 +216,10 @@ function main() {
         }
     }
     var elapsedMs = (System.nanoTime() - startAtomic.get()) / 1000000;
+    if (sent < total) {
+        print("[LoadTest] OVERALL BUDGET hit after " + Math.round(elapsedMs / 1000)
+              + "s (" + sent + "/" + total + " requests issued) — finishing early");
+    }
 
     // --- aggregate ---
     var lats = [];

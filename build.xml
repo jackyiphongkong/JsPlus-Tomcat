@@ -17,6 +17,28 @@
 		<available file="${jr.root}/version.properties" />
 	</condition>
 
+	<!-- changes.log: per-build history (English + Traditional-Chinese copies).
+	     Every successful `ant` (build target) appends one line to both files:
+	     version + timestamp + optional -Dchange.note text. -->
+	<property name="jr.changelog" value="${jr.root}/changes.log" />
+	<property name="jr.changelog.zh" value="${jr.root}/changes_zh-HK.log" />
+	<property name="jr.changenote" value="" />
+	<condition property="jr.changelog.exists">
+		<available file="${jr.changelog}" />
+	</condition>
+	<condition property="jr.changelog.zh.exists">
+		<available file="${jr.changelog.zh}" />
+	</condition>
+
+	<!-- Githubrepos mirror path used by the diff-check step: after every build,
+	     compare this Working tree's src/ java files against the mirror and
+	     append any differences to changes.log marked "found diffed". Read-only —
+	     nothing is copied or committed. -->
+	<property name="jr.git.repo" value="D:/Githubrepos/JsPlus-Tomcat" />
+	<condition property="is.windows">
+		<os family="windows" />
+	</condition>
+
 	<path id="classpath">
 		<fileset dir="${jr.lib}">
 			<include name="**/*.jar" />
@@ -91,6 +113,19 @@
 
 	<target name="version-bump" depends="version-final" />
 
+	<!-- Write the changes.log headers on the first build (English and
+	     Traditional-Chinese copies; each is created only when missing so an
+	     existing file is never overwritten). -->
+	<target name="build-init-en" unless="jr.changelog.exists">
+		<echo file="${jr.changelog}"
+			message="# JsPlus-Tomcat build history${line.separator}# Format: version  timestamp  note${line.separator}#${line.separator}" />
+	</target>
+	<target name="build-init-zh" unless="jr.changelog.zh.exists">
+		<echo file="${jr.changelog.zh}"
+			message="# JsPlus-Tomcat 建置歷史${line.separator}# 格式：版本  時間  備註${line.separator}#${line.separator}" />
+	</target>
+	<target name="build-init" depends="build-init-en,build-init-zh" />
+
 	<!-- Replace the ${BuildVersion.VERSION}(${BuildVersion.BUILD_DATE})
 	     placeholders in TomcatServer.java with the real build values before
 	     compilation. The regex first restores the placeholder in case a
@@ -162,8 +197,45 @@
 			<!--</manifest>-->
 		</jar>
 		<echo message="Packaged jsplus-tomcat-${jr.version}.jar" />
+
+		<!-- changes.log: append one history entry to both the English and the
+		     Traditional-Chinese copies after every successful package (version
+		     + timestamp + optional -Dchange.note="..."). -->
+		<tstamp>
+			<format property="jr.changelog.ts" pattern="yyyy-MM-dd HH:mm:ss" />
+		</tstamp>
+		<echo append="true" file="${jr.changelog}"
+			message="v${jr.version}  ${jr.changelog.ts}  ${jr.changenote}${line.separator}" />
+		<echo append="true" file="${jr.changelog.zh}"
+			message="v${jr.version}  ${jr.changelog.ts}  ${jr.changenote}${line.separator}" />
 	</target>
-	<target name="build">
-		<ant target="package" />
+
+	<!-- diff-check: compare this Working tree's src/ java files against the
+	     Githubrepos mirror after every build; append differences to changes.log
+	     marked "found diffed". Read-only — nothing is copied or committed. The
+	     scripts themselves skip when the mirror path is missing. -->
+	<target name="diff-check-win" if="is.windows">
+		<exec executable="powershell.exe" failonerror="false">
+			<arg value="-NoProfile" />
+			<arg value="-ExecutionPolicy" />
+			<arg value="Bypass" />
+			<arg value="-File" />
+			<arg value="${jr.root}/test/diff-check.ps1" />
+			<arg value="${jr.root}/src" />
+			<arg value="${jr.git.repo}/src" />
+			<arg value="${jr.changelog}" />
+			<arg value="${jr.changelog.zh}" />
+		</exec>
 	</target>
+	<target name="diff-check-sh" unless="is.windows">
+		<exec executable="sh" failonerror="false">
+			<arg value="${jr.root}/test/diff-check.sh" />
+			<arg value="${jr.root}/src" />
+			<arg value="${jr.git.repo}/src" />
+			<arg value="${jr.changelog}" />
+			<arg value="${jr.changelog.zh}" />
+		</exec>
+	</target>
+	<target name="diff-check-run" depends="diff-check-win,diff-check-sh" />
+	<target name="build" depends="build-init,package,diff-check-run" />
 </project>

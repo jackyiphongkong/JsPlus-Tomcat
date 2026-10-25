@@ -1,3 +1,26 @@
+/*******************************************************************************
+The MIT License (MIT)
+
+Copyright (c) 2024 KILLCODING.COM
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+*****************************************************************************/
 package com.killcoding.jsplus.tomcat;
 
 import java.io.IOException;
@@ -108,8 +131,14 @@ public class SecurityFilter implements Filter {
         Boolean userAuthed = (Boolean)Cache.get(cacheKey);
         if(userAuthed == null){
             userAuthed = checkUser( domain, port, username, pass);
-            Integer cacheSeconds = config.getInteger("SecurityFilter.cacheSeconds", 60);
-            Cache.set(cacheKey,userAuthed,cacheSeconds);
+            if (userAuthed != null && userAuthed.booleanValue()) {
+                // Only successful results are cached. Failed attempts must
+                // reach checkUser() every time so the failed-attempt counter
+                // and the account lockout (failed_attempts / locked_until)
+                // stay accurate.
+                Integer cacheSeconds = config.getInteger("SecurityFilter.cacheSeconds", 60);
+                Cache.set(cacheKey,userAuthed,cacheSeconds);
+            }
             String logType = userAuthed ? "Authorized" : "Unauthorized";
             String paramsMsg = String.format("username=%s",username);
             ServerLog.writeWebLog(domain, port, request.getRequestURI(), logType,
@@ -143,16 +172,100 @@ public class SecurityFilter implements Filter {
             Map<String,Object> user = getDomainAuthUser(domain,port,username);
             if(user == null){
                 return false;
-            }               
+            }
+
+            // ---- account lockout (failed_attempts / locked_until) ----
+            Timestamp now = new Clock().getSqlTimestamp();
+            Timestamp lockedUntil = (Timestamp) user.get("locked_until");
+            int failedAttempts = toInt(user.get("failed_attempts"));
+            int maxAttempts = toInt(domainAuth.get("max_attempts"));
+            int lockMinutes = toInt(domainAuth.get("lock_minutes"));
+            if (maxAttempts <= 0) maxAttempts = 5;
+            if (lockMinutes <= 0) lockMinutes = 30;
+
+            if (lockedUntil != null) {
+                if (now.before(lockedUntil)) {
+                    // Locked until a future time point: reject every attempt,
+                    // even with the correct password.
+                    LOG.warn(String.format("Account %s@%s:%s is locked until %s.", username, domain, port, lockedUntil));
+                    return false;
+                }
+                // Lock window has passed -> auto unlock and continue normally.
+                resetAuthLockout(user);
+                failedAttempts = 0;
+                lockedUntil = null;
+            }
+
             String encryptKey = (String)domainAuth.get("encrypt_key");
             String encryptPassBase64 = (String)user.get("encrypt_pass");
             byte[] encryptPassBytes = Base64Tools.decodeLines(encryptPassBase64);
             String decryptPass = new String(CipherTools.AESDecrypt(encryptKey,encryptPassBytes),BaseFile.CHARSET);
-            return decryptPass.equals(pass);
+            if (decryptPass.equals(pass)) {
+                // A successful login clears any previous failures / lock.
+                if (failedAttempts > 0 || lockedUntil != null) {
+                    resetAuthLockout(user);
+                }
+                return true;
+            }
+
+            // Wrong password: count it, then lock the account when the limit
+            // is reached (auto-unlock after lockMinutes).
+            int newFailed = failedAttempts + 1;
+            if (newFailed >= maxAttempts) {
+                Timestamp lockUntil = new Timestamp(now.getTime() + lockMinutes * 60000L);
+                updateAuthUserLock(user, 0, lockUntil);
+                LOG.warn(String.format("Account %s@%s:%s locked after %d failed attempts, auto-unlock at %s.",
+                        username, domain, port, newFailed, lockUntil));
+            } else {
+                updateAuthUserLock(user, newFailed, null);
+            }
+            return false;
         } catch (Exception e) {
             LOG.error(e.getMessage(), e);
         }
         return false;
+    }
+
+    private static int toInt(Object value) {
+        if (value == null) return 0;
+        if (value instanceof Number) return ((Number) value).intValue();
+        try {
+            return Integer.parseInt(String.valueOf(value).trim());
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private static void resetAuthLockout(Map<String, Object> user) throws Exception {
+        String sql = "UPDATE domain_auth_user SET failed_attempts = 0, locked_until = NULL, updated_at = :updated_at WHERE id = :id";
+        Connection conn = Db.getConnection();
+        CacheDriverExecutor cde = null;
+        try {
+            Map<String, Object> params = new HashMap<String, Object>();
+            params.put("id", user.get("id"));
+            params.put("updated_at", new Clock().getSqlTimestamp());
+            cde = new CacheDriverExecutor(conn);
+            cde.execute(sql, params);
+        } finally {
+            Db.closeQuietly(cde);
+        }
+    }
+
+    private static void updateAuthUserLock(Map<String, Object> user, int failedAttempts, Timestamp lockedUntil) throws Exception {
+        String sql = "UPDATE domain_auth_user SET failed_attempts = :failed_attempts, locked_until = :locked_until, updated_at = :updated_at WHERE id = :id";
+        Connection conn = Db.getConnection();
+        CacheDriverExecutor cde = null;
+        try {
+            Map<String, Object> params = new HashMap<String, Object>();
+            params.put("id", user.get("id"));
+            params.put("failed_attempts", failedAttempts);
+            params.put("locked_until", lockedUntil);
+            params.put("updated_at", new Clock().getSqlTimestamp());
+            cde = new CacheDriverExecutor(conn);
+            cde.execute(sql, params);
+        } finally {
+            Db.closeQuietly(cde);
+        }
     }
 
     private synchronized boolean isAuthEnable(String domain, String port) throws Exception {
@@ -272,7 +385,7 @@ public class SecurityFilter implements Filter {
         domain = domain.toLowerCase();
         port = port.toLowerCase();
         username = username.toLowerCase();   
-        String sql = "UPDATE domain_auth_user SET encrypt_pass = :encrypt_pass,updated_at = :updated_at WHERE id = :id";
+        String sql = "UPDATE domain_auth_user SET encrypt_pass = :encrypt_pass, failed_attempts = 0, locked_until = NULL, updated_at = :updated_at WHERE id = :id";
         CacheDriverExecutor cde = null;
         Map<String,Object> domainAuth = null;
         Map<String,Object> domainAuthUser = null;
@@ -636,6 +749,126 @@ public class SecurityFilter implements Filter {
             return resMap;
         }
     }    
+
+    /**
+     * Set the account-lockout policy for a domain:port Basic Auth setting.
+     * maxAttempts = how many consecutive wrong passwords are allowed before
+     * the account is locked; lockMinutes = how long the lock lasts before the
+     * account auto-unlocks.
+     */
+    public static Map<String, Object> setAuthLockPolicy(String domain, String port, int maxAttempts, int lockMinutes) {
+        Map<String, Object> resMap = new HashMap<String, Object>();
+        if (CommonTools.isBlank(domain)) {
+            resMap.put("code", 0);
+            resMap.put("msg", "The param 'domain' is required.");
+            return resMap;
+        }
+        if (CommonTools.isBlank(port)) {
+            resMap.put("code", 0);
+            resMap.put("msg", "The param 'port' is required.");
+            return resMap;
+        }
+        if (maxAttempts <= 0) {
+            resMap.put("code", 0);
+            resMap.put("msg", "The param 'maxAttempts' must be a positive integer.");
+            return resMap;
+        }
+        if (lockMinutes <= 0) {
+            resMap.put("code", 0);
+            resMap.put("msg", "The param 'lockMinutes' must be a positive integer.");
+            return resMap;
+        }
+        domain = domain.toLowerCase();
+        port = port.toLowerCase();
+        CacheDriverExecutor cde = null;
+        try {
+            Map<String, Object> domainAuth = getDomainAuth(domain, port);
+            if (domainAuth == null) {
+                resMap.put("code", 0);
+                resMap.put("msg", String.format("DomainAuth %s:%s does not exist.", domain, port));
+                return resMap;
+            }
+            String sql = "UPDATE domain_auth SET max_attempts = :max_attempts, lock_minutes = :lock_minutes, updated_at = :updated_at WHERE id = :id";
+            Connection conn = Db.getConnection();
+            Map<String, Object> params = new HashMap<String, Object>();
+            params.put("id", domainAuth.get("id"));
+            params.put("max_attempts", maxAttempts);
+            params.put("lock_minutes", lockMinutes);
+            params.put("updated_at", new Clock().getSqlTimestamp());
+            cde = new CacheDriverExecutor(conn);
+            cde.execute(sql, params);
+            resMap.put("code", 1);
+            resMap.put("msg", String.format("Auth lock policy for %s:%s updated (maxAttempts=%d, lockMinutes=%d).",
+                    domain, port, maxAttempts, lockMinutes));
+            return resMap;
+        } catch (Exception e) {
+            logError(resMap, e);
+            resMap.put("msg", String.format("Failed to update auth lock policy for %s:%s.", domain, port));
+            return resMap;
+        } finally {
+            Db.closeQuietly(cde);
+        }
+    }
+
+    /**
+     * Manually unlock a domain auth user: clears failed_attempts and
+     * locked_until immediately (no need to wait for the auto-unlock time).
+     */
+    public static Map<String, Object> unlockAuthUser(String domain, String port, String username) {
+        Map<String, Object> resMap = new HashMap<String, Object>();
+        if (CommonTools.isBlank(domain)) {
+            resMap.put("code", 0);
+            resMap.put("msg", "The param 'domain' is required.");
+            return resMap;
+        }
+        if (CommonTools.isBlank(port)) {
+            resMap.put("code", 0);
+            resMap.put("msg", "The param 'port' is required.");
+            return resMap;
+        }
+        if (CommonTools.isBlank(username)) {
+            resMap.put("code", 0);
+            resMap.put("msg", "The param 'username' is required.");
+            return resMap;
+        }
+        domain = domain.toLowerCase();
+        port = port.toLowerCase();
+        username = username.toLowerCase();
+        CacheDriverExecutor cde = null;
+        try {
+            Map<String, Object> domainAuth = getDomainAuth(domain, port);
+            if (domainAuth == null) {
+                resMap.put("code", 0);
+                resMap.put("msg", String.format("DomainAuth %s:%s does not exist.", domain, port));
+                return resMap;
+            }
+            Map<String, Object> user = getDomainAuthUser(domain, port, username);
+            if (user == null) {
+                resMap.put("code", 0);
+                resMap.put("msg", String.format("DomainAuthUser %s:%s.%s does not exist.", domain, port, username));
+                return resMap;
+            }
+            String sql = "UPDATE domain_auth_user SET failed_attempts = 0, locked_until = NULL, updated_at = :updated_at WHERE id = :id";
+            Connection conn = Db.getConnection();
+            Map<String, Object> params = new HashMap<String, Object>();
+            params.put("id", user.get("id"));
+            params.put("updated_at", new Clock().getSqlTimestamp());
+            cde = new CacheDriverExecutor(conn);
+            cde.execute(sql, params);
+            Integer cacheSeconds = config.getInteger("SecurityFilter.cacheSeconds", 60);
+            String cacheKey = String.format("%s:%s.%s", domain, port, username);
+            Cache.set(cacheKey, null, cacheSeconds);
+            resMap.put("code", 1);
+            resMap.put("msg", String.format("DomainAuthUser %s:%s.%s unlocked.", domain, port, username));
+            return resMap;
+        } catch (Exception e) {
+            logError(resMap, e);
+            resMap.put("msg", String.format("Failed to unlock DomainAuthUser %s:%s.%s.", domain, port, username));
+            return resMap;
+        } finally {
+            Db.closeQuietly(cde);
+        }
+    }
 
     private static boolean checkDomainAuthEnable(String domain, String port) throws Exception {
         CacheDriverExecutor cde = null;

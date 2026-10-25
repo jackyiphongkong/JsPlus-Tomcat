@@ -1,5 +1,5 @@
 // ============================================================================
-// JsPlus-Tomcat TestAll — unified console entry for the 5 test suites
+// JsPlus-Tomcat TestAll — unified console entry for the 6 test suites
 // ----------------------------------------------------------------------------
 // Run      : Inside the JsPlus console (server already running):
 //              Console.eval(System.getenv('JS_PLUS_PATH') + '/../test/TestAll.js')
@@ -12,6 +12,8 @@
 //              3) TestIpFilter.js       -> <PROJECT_ROOT>/test_reports/TestIpFilter-Report.html
 //              4) TestIpAttackDefense.js-> <PROJECT_ROOT>/test_reports/TestIpAttackDefense-Report.html
 //              5) TestTomcatServer.js    -> <PROJECT_ROOT>/test_reports/TestTomcatServer-Report.html
+//              6) TestAuthLockout.js     -> <PROJECT_ROOT>/test_reports/TestAuthLockout-Report.html
+//              7) TestFreed.js           -> <PROJECT_ROOT>/test_reports/TestFreed-Report.html
 //            This entry point then prints an aggregate pass/fail summary.
 // NOTE     : Each suite calls beginTest() and reports its own counters, so
 //            TestAll captures the counters right after each load() completes.
@@ -181,14 +183,16 @@ try {
 
 print("=== JsPlus-Tomcat TestAll (unified entry) ===");
 print("JS_PLUS_PATH: " + System.getProperty("JS_PLUS_PATH"));
-print("Suites       : TestDomainProxy -> TestSecurityFilter -> TestIpFilter -> TestIpAttackDefense -> TestTomcatServer");
+print("Suites       : TestDomainProxy -> TestSecurityFilter -> TestIpFilter -> TestIpAttackDefense -> TestTomcatServer -> TestAuthLockout -> TestFreed");
 
 var suites = [
     { file: "TestDomainProxy.js",      title: "TestDomainProxy" },
     { file: "TestSecurityFilter.js",   title: "TestSecurityFilter" },
     { file: "TestIpFilter.js",         title: "TestIpFilter" },
     { file: "TestIpAttackDefense.js",  title: "TestIpAttackDefense" },
-    { file: "TestTomcatServer.js",     title: "TestTomcatServer" }
+    { file: "TestTomcatServer.js",     title: "TestTomcatServer" },
+    { file: "TestAuthLockout.js",      title: "TestAuthLockout" },
+    { file: "TestFreed.js",            title: "TestFreed" }
 ];
 
 var totalPass = 0;
@@ -335,22 +339,39 @@ try {
 }
 
 // Stop the embedded Tomcat started by this bootstrap (harmless when skipped).
-if (BOOTSTRAPPED) {
-    try {
-        tomcat.stop();
-        print("Embedded Tomcat stopped.");
-    } catch (e) {
-        print("[WARN] tomcat.stop(): " + e);
-    }
-}
-
+// NOTE: tomcat.stop() is deliberately NOT called here. In Task mode the JVM
+// exits right below via Runtime.halt(0), which terminates the embedded Tomcat
+// together with this process. Calling stop() first has been observed to hang
+// (e.g. while IpAttackDefense's background DB batch retries a dead H2
+// connection), which would stall TestAll.bat at Step 2 and never reach the
+// load-test step.
 // Script/Task mode (TestAll.bat/.sh): exit this JVM directly WITHOUT
 // writing the shared exit.tmp signal file — ScriptConsole.exit() writes
 // <JS_PLUS_PATH>/.tmp/exit.tmp, which every other JsPlus JVM watching it
 // (including the H2 ghost started by BG_StartH2.bat / StartH2.js) would
-// detect and shut down together with this JVM. System.exit(0) only
-// terminates this process, leaving H2 running for TestAll's load-test step.
+// detect and shut down together with this JVM. Runtime.halt(0) only
+// terminates this process (no shutdown hooks), leaving H2 running for
+// TestAll's load-test step.
 // Interactive console eval keeps BOOTSTRAPPED=false and must NOT kill the console.
-if (BOOTSTRAPPED) {
-    Java.type("java.lang.System").exit(0);
+// TestAll.bat/.sh additionally export TESTALL_TASK=1 so this file hard-halts
+// even when jsplus auto-bootstraps a global `tomcat` in this JVM (which makes
+// `typeof tomcat !== "undefined"` and BOOTSTRAPPED=false) — without the halt,
+// the non-daemon TomcatServer await thread keeps the JVM alive and Step 3
+// (load test) would never start.
+var SysOut = Java.type("java.lang.System").out;
+var System2 = Java.type("java.lang.System");
+var inTaskMode = System2.getenv("TESTALL_TASK") !== null && System2.getenv("TESTALL_TASK") !== undefined;
+SysOut.println("[TestAll] END-OF-SCRIPT reached. BOOTSTRAPPED=" + BOOTSTRAPPED + " TASK_MODE=" + inTaskMode);
+SysOut.flush();
+if (BOOTSTRAPPED || inTaskMode) {
+    SysOut.println("[TestAll] halting now (halt(0))" + (inTaskMode ? " [task mode]" : " [bootstrapped]"));
+    SysOut.flush();
+    // Runtime.halt(0) instead of System.exit(0): System.exit runs shutdown
+    // hooks, and Tomcat's hook (stop -> close datasource) has been observed to
+    // hang while the datasource pool retries a dead H2 connection (all pool
+    // threads BLOCKED on the pool monitor lock), leaving this JVM alive and
+    // stalling TestAll.bat at Step 2 forever. halt(0) terminates this JVM
+    // immediately without hooks; the embedded Tomcat dies with it, and the H2
+    // ghost (a separate JVM) is left for the load-test step to reuse/restart.
+    Java.type("java.lang.Runtime").getRuntime().halt(0);
 }
