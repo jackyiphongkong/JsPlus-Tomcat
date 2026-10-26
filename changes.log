@@ -175,4 +175,4 @@ v8.0.44  2026-10-26 07:02:09
 #   Runtime.halt(0) because the CacheArray filter thread keeps the JVM alive.
 # [VERIFY] Stress: 5 passed / 0 failed (cacheSize=0). Full TestAll (8 suites):
 #   134 passed, 0 failed. LoadTest: 10000/10000 success, qps=263.5, avg=37ms,
-#   p50=36ms, p99=80ms, max=152ms.
+#   p50=36ms, p99=80ms, max=152ms.v8.0.45  2026-10-26 17:18:28  

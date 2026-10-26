@@ -170,4 +170,4 @@ v8.0.44  2026-10-26 07:02:09
 #   JVM 唔退）。
 # [驗證] 壓力測試：5 passed / 0 failed（cacheSize=0）。完整 TestAll（8 suite）：
 #   134 passed, 0 failed。LoadTest：10000/10000 成功，qps=263.5，avg=37ms，
-#   p50=36ms，p99=80ms，max=152ms。
+#   p50=36ms，p99=80ms，max=152ms。v8.0.45  2026-10-26 17:18:28  
