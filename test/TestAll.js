@@ -14,6 +14,7 @@
 //              5) TestTomcatServer.js    -> <PROJECT_ROOT>/test_reports/TestTomcatServer-Report.html
 //              6) TestAuthLockout.js     -> <PROJECT_ROOT>/test_reports/TestAuthLockout-Report.html
 //              7) TestFreed.js           -> <PROJECT_ROOT>/test_reports/TestFreed-Report.html
+//              8) TestServerLog.js       -> <PROJECT_ROOT>/test_reports/TestServerLog-Report.html
 //            This entry point then prints an aggregate pass/fail summary.
 // NOTE     : Each suite calls beginTest() and reports its own counters, so
 //            TestAll captures the counters right after each load() completes.
@@ -183,7 +184,7 @@ try {
 
 print("=== JsPlus-Tomcat TestAll (unified entry) ===");
 print("JS_PLUS_PATH: " + System.getProperty("JS_PLUS_PATH"));
-print("Suites       : TestDomainProxy -> TestSecurityFilter -> TestIpFilter -> TestIpAttackDefense -> TestTomcatServer -> TestAuthLockout -> TestFreed");
+print("Suites       : TestDomainProxy -> TestSecurityFilter -> TestIpFilter -> TestIpAttackDefense -> TestTomcatServer -> TestAuthLockout -> TestFreed -> TestServerLog");
 
 var suites = [
     { file: "TestDomainProxy.js",      title: "TestDomainProxy" },
@@ -192,7 +193,8 @@ var suites = [
     { file: "TestIpAttackDefense.js",  title: "TestIpAttackDefense" },
     { file: "TestTomcatServer.js",     title: "TestTomcatServer" },
     { file: "TestAuthLockout.js",      title: "TestAuthLockout" },
-    { file: "TestFreed.js",            title: "TestFreed" }
+    { file: "TestFreed.js",            title: "TestFreed" },
+    { file: "TestServerLog.js",        title: "TestServerLog" }
 ];
 
 var totalPass = 0;
@@ -223,8 +225,11 @@ if (cfgCheck.ok) {
     print("[FAIL] filter config -> missing: " + cfgCheck.missing.join(", "));
 }
 
-for (var i = 0; i < suites.length; i++) {
-    var s = suites[i];
+// NOTE: loop variable must NOT be named `i`/`j` — suites load into the same
+// global scope and their top-level `var i` (e.g. TestFreed's stress loop)
+// overwrites it, silently skipping the remaining suites.
+for (var suiteIdx = 0; suiteIdx < suites.length; suiteIdx++) {
+    var s = suites[suiteIdx];
     print("");
     print("===== Running " + s.title + " =====");
     load(basePath + "../test/" + s.file);
@@ -233,8 +238,8 @@ for (var i = 0; i < suites.length; i++) {
     totalPass += passCount;
     totalFail += failCount;
     suiteResults.push({ title: s.title, pass: passCount, fail: failCount });
-    for (var j = 0; j < failures.length; j++) {
-        allFailures.push(s.title + " - " + failures[j]);
+    for (var fl = 0; fl < failures.length; fl++) {
+        allFailures.push(s.title + " - " + failures[fl]);
     }
     print(s.title + " => " + passCount + " passed, " + failCount + " failed");
 }

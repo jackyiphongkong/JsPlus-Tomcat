@@ -83,7 +83,11 @@ public class TomcatScriptConsole {
 	public synchronized static void initScriptConsole(String initEngineName) throws Exception {
 		if (MasterConsole == null) {
 			ConfigProperties consoleVariables = new ConfigProperties();
-			if (CommonTools.isBlank(initEngineName)) {
+			// B6 fix: honour the passed engine name — the old code ignored a
+			// non-blank argument and always used the field's previous value.
+			if (!CommonTools.isBlank(initEngineName)) {
+				engineName = initEngineName;
+			} else if (CommonTools.isBlank(engineName)) {
 				engineName = defaultEngineName;
 			}
 			consoleVariables.putAndReturnSlef("ScriptEngine", engineName);
@@ -158,8 +162,14 @@ public class TomcatScriptConsole {
 
 	public synchronized static void freed() {
 		try {
-			clear();
 			long tid = Thread.currentThread().getId();
+			// C10 fix: only clear the context when this thread actually holds a
+			// console. The old code called clear() unconditionally, which made
+			// freed() take a fresh console (and even throw "Full Console Pool")
+			// for threads that never held one.
+			if (CONSOLES_USING_MARK.get(tid) != null) {
+				clear();
+			}
 			final ScriptConsole sc = CONSOLES_USING_MARK.get(tid);
 			if (sc != null) {
 				final Integer useIndex = CONSOLES_THREAD_MARK.get(tid);
@@ -267,6 +277,13 @@ public class TomcatScriptConsole {
 		return poolSize;
 	}
 
+	/** Actual number of consoles currently in the pool (vs the configured
+	 *  poolSize) — a hard number for tests to confirm the pool returns to
+	 *  full after traffic. */
+	public static int getConsolePoolSize() {
+		return CONSOLES_POOL.size();
+	}
+
 	public static void setEngineName(String engineName) {
 		TomcatScriptConsole.engineName = engineName;
 	}
@@ -286,6 +303,12 @@ public class TomcatScriptConsole {
 
 	public static Object getDomainParams(String customScriptFile) throws Exception {
 		try {
+			// C8 fix: reject path traversal / absolute paths in scriptFile so a
+			// mapping cannot evaluate a script outside the JS_PLUS_PATH/domain folder.
+			if (!isSafeScriptFile(customScriptFile)) {
+				log.warn("Invalid scriptFile (path traversal rejected): {}", customScriptFile);
+				return null;
+			}
 			String scriptPath = String.format("%s/%s", getAppScriptPath(),customScriptFile);
 			File scrptFile = new File(scriptPath);
 			if (checkExists(scrptFile)) {
@@ -309,6 +332,11 @@ public class TomcatScriptConsole {
 
 	public static Object getResponseFilter(String customScriptFile) throws Exception {
 		try {
+			// C8 fix: reject path traversal / absolute paths in scriptFile.
+			if (!isSafeScriptFile(customScriptFile)) {
+				log.warn("Invalid scriptFile (path traversal rejected): {}", customScriptFile);
+				return null;
+			}
 			String scriptPath = String.format("%s/%s", getAppScriptPath(),customScriptFile);
 			File scrptFile = new File(scriptPath);
 			if (checkExists(scrptFile)) {
@@ -324,5 +352,28 @@ public class TomcatScriptConsole {
 			freed();
 		}
 	}	
+
+
+
+	/** C8: a scriptFile must be a bare relative file name inside the domain
+	 *  folder — no path separators, no "..", no absolute path, no drive letter. */
+	private static boolean isSafeScriptFile(String scriptFile) {
+		if (scriptFile == null || scriptFile.isEmpty()) {
+			return false;
+		}
+		if (scriptFile.contains("..")) {
+			return false;
+		}
+		if (scriptFile.startsWith("/") || scriptFile.startsWith("\\")) {
+			return false;
+		}
+		if (scriptFile.contains("/") || scriptFile.contains("\\")) {
+			return false;
+		}
+		if (scriptFile.matches("^[A-Za-z]:.*")) {
+			return false;
+		}
+		return true;
+	}
 
 }

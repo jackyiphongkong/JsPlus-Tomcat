@@ -215,16 +215,34 @@
 	     marked "found diffed". Read-only — nothing is copied or committed. The
 	     scripts themselves skip when the mirror path is missing. -->
 	<target name="diff-check-win" if="is.windows">
+		<!-- Normalise the mixed-separator paths (D:\.../test/...) to pure
+		     backslash so powershell -File resolves them; the old -File call
+		     with forward slashes was rejected ("...does not exist"). -->
+		<pathconvert property="jr.diffcheck.script" targetos="windows">
+			<path location="${jr.root}/test/diff-check.ps1" />
+		</pathconvert>
+		<pathconvert property="jr.diffcheck.src" targetos="windows">
+			<path location="${jr.root}/src" />
+		</pathconvert>
+		<pathconvert property="jr.diffcheck.mirror" targetos="windows">
+			<path location="${jr.git.repo}/src" />
+		</pathconvert>
+		<pathconvert property="jr.diffcheck.log" targetos="windows">
+			<path location="${jr.changelog}" />
+		</pathconvert>
+		<pathconvert property="jr.diffcheck.logzh" targetos="windows">
+			<path location="${jr.changelog.zh}" />
+		</pathconvert>
 		<exec executable="powershell.exe" failonerror="false">
 			<arg value="-NoProfile" />
 			<arg value="-ExecutionPolicy" />
 			<arg value="Bypass" />
 			<arg value="-File" />
-			<arg value="${jr.root}/test/diff-check.ps1" />
-			<arg value="${jr.root}/src" />
-			<arg value="${jr.git.repo}/src" />
-			<arg value="${jr.changelog}" />
-			<arg value="${jr.changelog.zh}" />
+			<arg value="${jr.diffcheck.script}" />
+			<arg value="${jr.diffcheck.src}" />
+			<arg value="${jr.diffcheck.mirror}" />
+			<arg value="${jr.diffcheck.log}" />
+			<arg value="${jr.diffcheck.logzh}" />
 		</exec>
 	</target>
 	<target name="diff-check-sh" unless="is.windows">

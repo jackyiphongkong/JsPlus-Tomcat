@@ -1,4 +1,4 @@
-﻿# JsPlus-Tomcat build history
+# JsPlus-Tomcat build history
 # Format: version  timestamp  note
 #
 v8.0.22  2026-10-25 11:46:04  
@@ -79,3 +79,100 @@ found diffed: 1 java file(s) (2026-10-25 22:07:42)
 # [VERIFY] Full TestAll (7 suites): 123 passed, 0 failed. LoadTest:
 #   10000/10000 success, qps=258.6, avg=38ms, p50=37ms, p99=79ms, max=114ms.
 #
+v8.0.35  2026-10-25 22:35:38  
+v8.0.37  2026-10-25 22:40:29  
+v8.0.38  2026-10-25 22:42:38  
+v8.0.39  2026-10-25 22:45:46  
+# [FIX] B2-B19 Java core bug round (2026-10-25):
+#   B2  DomainProxy.doFilter - console always freed on every code path (finally).
+#   B3  TomcatServer.start/stop - shared daemon lifecycle executor + daemon waitThread.
+#   B4  SecurityFilter.checkUserFromCache - per-account lock (double-checked) so
+#       failed_attempts can no longer double-count under concurrency.
+#   B5  SecurityFilter Basic auth - RFC 7235 case-insensitive scheme + missing ':'
+#       guard (AIOOBE used to degrade to 401).
+#   B6  TomcatScriptConsole.initScriptConsole(engine) now honours the argument.
+#   B7  TomcatServer.loadSSLHost - min-length guard for keystoreFile/Pass/Alias arrays.
+#   B8  DomainProxy.removeDomainMapping(catch-all) also soft-deletes uri-specific DB rows.
+#   B9  IpAttackDefense - compiled uri_pattern cache (no per-request Pattern.compile).
+#   B10 TomcatServer.queryDomainSslHost(null) - blank check (NPE fix).
+#   B11 DomainProxy - request body capped at 10 MB (readAllBytes OOM fix, returns 413).
+#   B12 TomcatServer - SSL.keystoreEncryptKey master key; encrypt_key no longer
+#       stored in plaintext in the DB when configured (legacy rows still work).
+#   B13 IpAttackDefense - atomic sliding-window counter (per-key lock).
+#   B14 DomainProxy - URI_PREFIX_REGISTRY guarded (no ConcurrentModificationException).
+#   B15 TomcatServer - warn when SSL.enable=true and sslPort==port.
+#   B16 IpFilter/DomainProxy/SecurityFilter - mis-configured errorRedirectUrl no
+#       longer crashes the request path.
+#   B17 SecurityFilter - typo'd cache key 'ScurityFilter' fixed to 'SecurityFilter'.
+#   B18 TomcatServer - TomcatScriptConsole.poolSize default aligned to 1000.
+#   B19 ServerLog - filename without '.' no longer throws (defensive).
+#   DB-CLOSE SecurityFilter resetAuthLockout/updateAuthUserLock - connection now
+#       acquired inside the try so an early exception cannot leak it.
+#   INFRA test/diff-check.ps1 + diff-check.sh recreated (both were missing, which
+#       silently disabled the "found diffed" changelog note); build.xml
+#       diff-check-win now uses -Command so the mixed-separator path resolves.
+# [VERIFY] Full TestAll (7 suites) after each group: 123 passed, 0 failed x3.
+#   LoadTest (final): 10000/10000 success, qps=259.9, avg=38ms, p50=33ms,
+#   p90=51ms, p99=106ms, max=232ms.
+#v8.0.40  2026-10-25 22:50:25  
+v8.0.41  2026-10-25 22:51:10  
+v8.0.42  2026-10-25 22:56:51  
+v8.0.43  2026-10-26 06:54:10  
+# [FIX] C1-C12 bug audit round (2026-10-26):
+#   C1  IpAttackDefense queryDefenseRules/queryIpBans/queryIpRequestLogs - JDBC
+#       connection leaked on every call (no finally); pool could exhaust over time.
+#   C2  SecurityFilter.getDomainAuthUser - NPE when the domain:port has no
+#       domain_auth row (raw exception instead of a "no records" result).
+#   C3  ServerLog.writeWebLog - config type comparison now trims each entry
+#       ("GET, POST" with a trailing space now matches "POST").
+#   C4  IpFilter.cidrMatch - out-of-range prefix (e.g. /-1, /99) rejected.
+#   C5  IpFilter.removeDomainIpRuleByBan - verifies affected rows; an unknown
+#       banId now reports code 0 instead of a false success.
+#   C6  SecurityFilter.createDomainAuth/createDomainAuthUser - synchronized to
+#       prevent racing duplicate writes.
+#   C7  SecurityFilter.getDomainAuth/checkDomainAuthEnable - case-insensitive
+#       domain/port lookups (aligned with IpFilter).
+#   C8  TomcatScriptConsole.getDomainParams/getResponseFilter - scriptFile path
+#       traversal / absolute path / drive letter rejected (isSafeScriptFile).
+#   C9  DomainProxy.doFilter - mode "forward"/"redirect" now case-insensitive
+#       (aligned with "internal").
+#   C10 TomcatScriptConsole.freed() - no longer takes a fresh console for
+#       threads that never held one (clear() only when the thread is marked).
+#   C11 TomcatServer.loadDomainMapping - one broken param_value row no longer
+#       aborts the whole load; the bad row is skipped with a warning.
+#   C12 DomainProxy.createDomainMappingParam/updateDomainMappingParam -
+#       synchronized to close the create-vs-create race.
+# [VERIFY] Full TestAll (7 suites): 123 passed, 0 failed. LoadTest:
+#   10000/10000 success, qps=251, avg=39ms, p50=38ms, p99=75ms, max=142ms.
+#
+
+v8.0.44  2026-10-26 07:02:09  
+
+# 2026-10-26 (manual update) — CacheArray sweep + ServerLog bulk write stress
+# [FIX] jsplus-core CacheArray.java (D:\Working\JsPlus, rebuilt
+#   jsplus-embed-6.1.0.jar -> LibHome\jsplus\default\):
+#   * NEW sweepProcessed(int count): thread-safe head sweep. Rows persisted by
+#     the filter thread are reclaimed instead of growing the cache forever.
+#     Synchronized; touches only the head while concurrent add() always appends
+#     at the tail, so new rows are never swept. O(n) single pass (removeAll),
+#     avoids per-item ArrayList shifts.
+#   * filter() loop now calls sweepProcessed(index) right after executeBatch
+#     (i.e. after the batch is persisted) and keeps its local index in sync, so
+#     the cache stays at ~one batch under sustained load. Safe under global
+#     multi-thread access (ServerLog.webLogCacheArray is static/shared across
+#     request threads). Other CacheArray.filter users are unaffected unless
+#     they call sweep.
+# [NEW] test/TestServerLog.js — 8th TestAll suite (11 checks S1-S11): harness
+#   readiness, setParams/getParams round-trip, Enable=false gate, Type match
+#   (C3 regression), CSV flush + header row, data row contents (domain/uri/type),
+#   Allowed[] regex filter, ParamMaxLength truncation, config restore, cleanup.
+#   Console-mode runs reset the shared static webLogCacheArray via Class.forName
+#   reflection so the flush uses the suite's short LogTimer.
+# [NEW] test/TestServerLogStress.js — standalone bulk-write stress (default
+#   5000 rows): every write returns true, CSV drains header + N rows, first and
+#   last rows intact, CacheArray drained (B4: size must be << total — was 5000
+#   before the fix, now 0), config restored + scratch folder removed; ends with
+#   Runtime.halt(0) because the CacheArray filter thread keeps the JVM alive.
+# [VERIFY] Stress: 5 passed / 0 failed (cacheSize=0). Full TestAll (8 suites):
+#   134 passed, 0 failed. LoadTest: 10000/10000 success, qps=263.5, avg=37ms,
+#   p50=36ms, p99=80ms, max=152ms.

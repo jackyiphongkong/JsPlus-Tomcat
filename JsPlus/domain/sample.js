@@ -13,7 +13,8 @@ function DomainMapping(){
 }
 
 DomainMapping.prototype.getTarget = function(){
-    return "https://zh.wikipedia.org"; 
+    //return "https://zh.wikipedia.org"; 
+    return "https://killcoding.com";
 }
 
 DomainMapping.prototype.getConnectTimeout = function(){

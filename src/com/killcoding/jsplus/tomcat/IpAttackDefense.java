@@ -29,6 +29,7 @@ import java.sql.Timestamp;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 import com.killcoding.cache.Cache;
@@ -187,6 +188,15 @@ public class IpAttackDefense implements Filter {
     // Defense check (sliding-window counter + auto ban)
     // ------------------------------------------------------------------
 
+    /** B9 fix: compiled uri_pattern cache (Pattern.compile per request was
+     *  wasteful CPU under attack). */
+    private static final ConcurrentHashMap<String, Pattern> URI_PATTERN_CACHE = new ConcurrentHashMap<>();
+
+    /** B13 fix: per-count-key locks so concurrent requests from the same IP
+     *  cannot both read the old counter and under-count (the sliding window
+     *  used to lose increments and could let an attacker slip past threshold). */
+    private static final ConcurrentHashMap<String, Object> DEFENSE_COUNT_LOCKS = new ConcurrentHashMap<>();
+
     private void checkDefense(HttpServletRequest request) throws Exception {
         List<Map<String, Object>> rules = getDefenseRules();
         if (rules == null || rules.isEmpty()) {
@@ -208,14 +218,17 @@ public class IpAttackDefense implements Filter {
                     continue;
                 }
                 String countKey = String.format("IpAttackDefense.count.%s.%s", ruleId, ip);
-                Integer count = (Integer) Cache.get(countKey);
-                count = count == null ? 1 : count + 1;
-                if (count >= threshold) {
-                    ban(rule, ip, domain, port);
-                    // Reset the counter so we do not re-trigger the ban on every request.
-                    Cache.set(countKey, null, windowSeconds);
-                } else {
-                    Cache.set(countKey, count, windowSeconds);
+                // B13 fix: atomically increment the sliding-window counter per key.
+                synchronized (DEFENSE_COUNT_LOCKS.computeIfAbsent(countKey, k -> new Object())) {
+                    Integer count = (Integer) Cache.get(countKey);
+                    count = count == null ? 1 : count + 1;
+                    if (count >= threshold) {
+                        ban(rule, ip, domain, port);
+                        // Reset the counter so we do not re-trigger the ban on every request.
+                        Cache.set(countKey, null, windowSeconds);
+                    } else {
+                        Cache.set(countKey, count, windowSeconds);
+                    }
                 }
             } catch (Exception e) {
                 log.warn("Defense rule check failed: {}", e.getMessage());
@@ -235,8 +248,12 @@ public class IpAttackDefense implements Filter {
         // A rule with a uri_pattern also matches the request URI (regex find);
         // a blank uri_pattern matches every URI on the domain:port.
         String uriPattern = (String) rule.get("uri_pattern");
-        if (!CommonTools.isBlank(uriPattern) && !Pattern.compile(uriPattern).matcher(uri).find()) {
-            return false;
+        if (!CommonTools.isBlank(uriPattern)) {
+            // B9 fix: reuse compiled patterns instead of compiling per request.
+            Pattern compiled = URI_PATTERN_CACHE.computeIfAbsent(uriPattern, pt -> Pattern.compile(pt));
+            if (!compiled.matcher(uri).find()) {
+                return false;
+            }
         }
         return true;
     }
@@ -663,8 +680,8 @@ public class IpAttackDefense implements Filter {
     public static Map<String, Object> queryDefenseRules() {
         Map<String, Object> resMap = new HashMap<String, Object>();
         String msg = "";
+        CacheDriverExecutor cde = null;
         try {
-            CacheDriverExecutor cde = null;
             Connection conn = Db.getConnection();
             cde = new CacheDriverExecutor(conn);
             Map<String, Object> params = new HashMap<String, Object>();
@@ -692,14 +709,16 @@ public class IpAttackDefense implements Filter {
             resMap.put("code", -1);
             resMap.put("msg", "Failed to query DefenseRules.");
             return resMap;
+        } finally {
+            Db.closeQuietly(cde);
         }
     }
 
     public static Map<String, Object> queryIpBans() {
         Map<String, Object> resMap = new HashMap<String, Object>();
         String msg = "";
+        CacheDriverExecutor cde = null;
         try {
-            CacheDriverExecutor cde = null;
             Connection conn = Db.getConnection();
             cde = new CacheDriverExecutor(conn);
             Map<String, Object> params = new HashMap<String, Object>();
@@ -725,6 +744,8 @@ public class IpAttackDefense implements Filter {
             resMap.put("code", -1);
             resMap.put("msg", "Failed to query IpBans.");
             return resMap;
+        } finally {
+            Db.closeQuietly(cde);
         }
     }
 
@@ -777,8 +798,8 @@ public class IpAttackDefense implements Filter {
     public static Map<String, Object> queryIpRequestLogs() {
         Map<String, Object> resMap = new HashMap<String, Object>();
         String msg = "";
+        CacheDriverExecutor cde = null;
         try {
-            CacheDriverExecutor cde = null;
             Connection conn = Db.getConnection();
             cde = new CacheDriverExecutor(conn);
             Map<String, Object> params = new HashMap<String, Object>();
@@ -806,6 +827,8 @@ public class IpAttackDefense implements Filter {
             resMap.put("code", -1);
             resMap.put("msg", "Failed to query IpRequestLogs.");
             return resMap;
+        } finally {
+            Db.closeQuietly(cde);
         }
     }
 

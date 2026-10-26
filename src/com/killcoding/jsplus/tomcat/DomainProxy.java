@@ -58,6 +58,7 @@ import com.killcoding.log.Logger;
 import com.killcoding.log.LoggerFactory;
 import org.apache.catalina.connector.ClientAbortException;
 import java.util.HashMap;
+import java.util.IllegalFormatException;
 import com.killcoding.tool.ConfigProperties;
 import com.killcoding.cache.Cache;
 import com.killcoding.datasource.CacheDriverExecutor;
@@ -95,6 +96,10 @@ public class DomainProxy implements Filter {
 	 *  Sorted descending so the longest matching prefix is picked first. */
 	private static final ConcurrentHashMap<String, java.util.TreeSet<String>> URI_PREFIX_REGISTRY =
 			new ConcurrentHashMap<String, java.util.TreeSet<String>>();
+
+	/** B14 fix: guards every TreeSet mutation/iteration so a concurrent mapping
+	 *  update can never throw ConcurrentModificationException in matchUri(). */
+	private static final Object URI_PREFIX_REGISTRY_LOCK = new Object();
 
 	/**
 	 * Normalise a uri mapping value: trim, drop a bare "/", ensure a leading "/",
@@ -140,9 +145,11 @@ public class DomainProxy implements Filter {
 			return;
 		}
 		String key = String.format("%s:%s", domain, port);
-		java.util.TreeSet<String> set = URI_PREFIX_REGISTRY.computeIfAbsent(key,
-				k -> new java.util.TreeSet<String>());
-		set.add(uri);
+		synchronized (URI_PREFIX_REGISTRY_LOCK) {
+			java.util.TreeSet<String> set = URI_PREFIX_REGISTRY.computeIfAbsent(key,
+					k -> new java.util.TreeSet<String>());
+			set.add(uri);
+		}
 	}
 
 	private static void unregisterUri(String domain, String port, String uri) {
@@ -150,13 +157,15 @@ public class DomainProxy implements Filter {
 			return;
 		}
 		String key = String.format("%s:%s", domain, port);
-		java.util.TreeSet<String> set = URI_PREFIX_REGISTRY.get(key);
-		if (set == null) {
-			return;
-		}
-		set.remove(uri);
-		if (set.isEmpty()) {
-			URI_PREFIX_REGISTRY.remove(key);
+		synchronized (URI_PREFIX_REGISTRY_LOCK) {
+			java.util.TreeSet<String> set = URI_PREFIX_REGISTRY.get(key);
+			if (set == null) {
+				return;
+			}
+			set.remove(uri);
+			if (set.isEmpty()) {
+				URI_PREFIX_REGISTRY.remove(key);
+			}
 		}
 	}
 
@@ -168,11 +177,13 @@ public class DomainProxy implements Filter {
 		if (set == null || set.isEmpty()) {
 			return null;
 		}
-		java.util.Iterator<String> it = set.descendingIterator();
-		while (it.hasNext()) {
-			String prefix = it.next();
-			if (requestPath.equals(prefix) || requestPath.startsWith(prefix + "/")) {
-				return prefix;
+		synchronized (URI_PREFIX_REGISTRY_LOCK) {
+			java.util.Iterator<String> it = set.descendingIterator();
+			while (it.hasNext()) {
+				String prefix = it.next();
+				if (requestPath.equals(prefix) || requestPath.startsWith(prefix + "/")) {
+					return prefix;
+				}
 			}
 		}
 		return null;
@@ -313,21 +324,33 @@ public class DomainProxy implements Filter {
 
 			String forwardUrl = buildForwardUrl(target, matchedUri, request);
 			byte[] bodyBytes;
+			// B11 fix: cap the request body so an unbounded upload cannot exhaust
+			// the heap (readAllBytes() was unbounded). Chunked requests without a
+			// Content-Length are detected by reading max+1 bytes.
+			int maxBodyBytes = 10 * 1024 * 1024;
 			try (InputStream is = request.getInputStream()) {
-				bodyBytes = is.readAllBytes();
+				if (request.getContentLengthLong() > maxBodyBytes) {
+					safeSendError(response, HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE, "Request body too large.");
+					return;
+				}
+				bodyBytes = is.readNBytes(maxBodyBytes + 1);
+				if (bodyBytes.length > maxBodyBytes) {
+					safeSendError(response, HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE, "Request body too large.");
+					return;
+				}
 			}
 			HttpRequest.Builder builder = buildForwardRequest(domainCp, request, forwardUrl, bodyBytes);
 
-			if (Arrays.asList("Forward", "Redirect").indexOf(mode) <= -1) {
+			if (!"Forward".equalsIgnoreCase(mode) && !"Redirect".equalsIgnoreCase(mode)) {
 				safeSendError(response, 502, "No action");
 				return;
 			}
-			if (mode.equals("Redirect")) {
+			if ("Redirect".equalsIgnoreCase(mode)) {
 				response.setStatus(302);
 				response.setHeader("Location", forwardUrl);
 				return;
 			}
-			if (mode.equals("Forward")) {
+			if ("Forward".equalsIgnoreCase(mode)) {
 				forwardRequest(domainCp, request, response, builder, domain, port);
 			}
 			long spend = System.currentTimeMillis() - begin;
@@ -350,6 +373,13 @@ public class DomainProxy implements Filter {
 			long spend3 = System.currentTimeMillis() - begin;
 			ServerLog.writeWebLog(domain, port, request.getRequestURI(), "error", System.currentTimeMillis(), request.getQueryString(), ServerLog.getHeaders(request), String.format("spend=%s;buferSize=%s;contentType=%s", Long.valueOf(spend3), Integer.valueOf(response.getBufferSize()), response.getContentType()),request.getRemoteAddr());
 			safeSendError(response, 502, "Server Error.");
+		} finally {
+			// B2 fix: always return the console taken by putConsoleParams() on
+			// every code path (no mapping / target blank / internal / redirect /
+			// forward / exception). freed() is idempotent — it no-ops when this
+			// thread holds no console — so it is also safe to call again after
+			// applyDomainScript() already freed via getDomainParams().
+			TomcatScriptConsole.freed();
 		}
 	}
 
@@ -631,7 +661,16 @@ public class DomainProxy implements Filter {
         if (!response.isCommitted()) {
             boolean errorRedirectEnable = config.getBoolean("errorRedirectEnable", false).booleanValue();
             if (errorRedirectEnable) {
-                String errorRedirectUrl = String.format(config.getString("errorRedirectUrl", "http://errorRedirectUrl/%s.html"), code);
+                // B16 fix: never crash the request path on a mis-configured
+                // errorRedirectUrl (a template without %s, or with a foreign
+                // format spec, used to throw IllegalFormatConversionException).
+                String errorRedirectTpl = config.getString("errorRedirectUrl", "http://errorRedirectUrl/%s.html");
+                String errorRedirectUrl;
+                try {
+                    errorRedirectUrl = String.format(errorRedirectTpl, code);
+                } catch (IllegalFormatException ife) {
+                    errorRedirectUrl = errorRedirectTpl.replace("%s", code + "").replace("%d", code + "");
+                }
                 response.setStatus(302);
                 response.setHeader("Location", errorRedirectUrl);
                 return;
@@ -797,6 +836,9 @@ public class DomainProxy implements Filter {
 				Cache.remove(domainPortKey(domain, port));
 				// Dropping the catch-all invalidates every uri-specific mapping too.
 				URI_PREFIX_REGISTRY.remove(String.format("%s:%s", domain, port));
+				// B8 fix: also soft-delete the uri-specific DB rows so the removal
+				// survives a restart (previously they resurrected on load).
+				removeAllDomainMappingParams(domain, port);
 			} else {
 				Cache.remove(domainUriKey(domain, port, uri));
 				unregisterUri(domain, port, uri);
@@ -915,7 +957,9 @@ public class DomainProxy implements Filter {
         }
     }	
 
-    private static boolean createDomainMappingParam(String domain, String port, String uri, Map<String, Object> domainParams) throws Exception {
+    // C12 fix: serialise create/update so two racing setDomainMapping calls
+    // cannot both pass the "does it exist" check and write duplicate rows.
+    private static synchronized boolean createDomainMappingParam(String domain, String port, String uri, Map<String, Object> domainParams) throws Exception {
 		Map<String,Object> domainMappingParam = getDomainMappingParam(domain, port, uri);
 		
 		if(domainMappingParam != null) throw new Exception(String.format("The domain params %s:%s%s already exists.", domain, port, uriDisplay(uri))); 
@@ -943,7 +987,8 @@ public class DomainProxy implements Filter {
         }
     }
 
-    private static boolean updateDomainMappingParam(String domain, String port, String uri, Map<String, Object> domainParams) throws Exception {
+    // C12 fix: serialise create/update (see createDomainMappingParam).
+    private static synchronized boolean updateDomainMappingParam(String domain, String port, String uri, Map<String, Object> domainParams) throws Exception {
 		Map<String,Object> domainMappingParam = getDomainMappingParam(domain, port, uri);
 		
 		if(domainMappingParam == null) throw new Exception(String.format("The domain params %s:%s%s does not exist.", domain, port, uriDisplay(uri)));
@@ -964,6 +1009,28 @@ public class DomainProxy implements Filter {
             Db.closeQuietly(cde);
         }
     }	
+
+    /** B8 fix: soft-delete every uri-specific mapping for domain:port so a
+     *  catch-all removal also clears the DB rows (previously only the runtime
+     *  cache/registry were dropped and the uri rows resurrected on restart). */
+    private static boolean removeAllDomainMappingParams(String domain, String port) throws Exception {
+        CacheDriverExecutor cde = null;
+        String sql = "UPDATE domain_mapping_param SET deleted_at = :deleted_at, deleted = :deleted"
+                + " WHERE domain = :domain AND port = :port AND uri <> '' AND deleted = false";
+        try {
+            Connection conn = Db.getConnection();
+            Timestamp currentTime = new Clock().getSqlTimestamp();
+            Map<String, Object> params = new HashMap<String, Object>();
+            params.put("domain", domain);
+            params.put("port", port);
+            params.put("deleted_at", currentTime);
+            params.put("deleted", true);
+            cde = new CacheDriverExecutor(conn);
+            return cde.execute(sql, params) > 0;
+        } finally {
+            Db.closeQuietly(cde);
+        }
+    }
 
     private static boolean removeDomainMappingParam(String domain, String port, String uri) throws Exception {
 		Map<String,Object> domainMappingParam = getDomainMappingParam(domain, port, uri);

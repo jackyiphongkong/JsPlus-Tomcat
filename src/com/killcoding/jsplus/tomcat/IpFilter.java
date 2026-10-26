@@ -29,6 +29,7 @@ import java.sql.Connection;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.IllegalFormatException;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
@@ -332,6 +333,11 @@ public class IpFilter implements Filter {
             byte[] addr = InetAddress.getByName(ip).getAddress();
             byte[] net = InetAddress.getByName(netStr).getAddress();
             if (addr.length != net.length) {
+                return false;
+            }
+            // C4 fix: an out-of-range prefix (e.g. /-1 or /99) used to behave
+            // like /32 (or /0) and could match unintended traffic; reject it.
+            if (prefix < 0 || prefix > addr.length * 8) {
                 return false;
             }
             int bits = prefix;
@@ -759,8 +765,15 @@ public class IpFilter implements Filter {
             params.put("deleted", true);
             params.put("deleted_flag", false);
             cde = new CacheDriverExecutor(conn);
-            cde.execute(sql, params);
+            int rows = cde.execute(sql, params);
             invalidateCache(domain, port);
+            if (rows == 0) {
+                // C5 fix: a stale/unknown banId used to report success even
+                // though nothing was removed; report it as not found instead.
+                resMap.put("code", 0);
+                resMap.put("msg", "No DomainIpRule created by this ip_ban found to remove.");
+                return resMap;
+            }
             resMap.put("code", 1);
             resMap.put("msg", "DomainIpRule created by ip_ban removed successfully.");
             return resMap;
@@ -822,8 +835,16 @@ public class IpFilter implements Filter {
         if (!response.isCommitted()) {
             boolean errorRedirectEnable = config.getBoolean("errorRedirectEnable", false);
             if (errorRedirectEnable) {
-                String errorRedirectUrl = String.format(
-                        config.getString("errorRedirectUrl", "http://errorRedirectUrl/%s.html"), code + "");
+                // B16 fix: never crash the request path on a mis-configured
+                // errorRedirectUrl (a template without %s, or with a foreign
+                // format spec, used to throw IllegalFormatConversionException).
+                String errorRedirectTpl = config.getString("errorRedirectUrl", "http://errorRedirectUrl/%s.html");
+                String errorRedirectUrl;
+                try {
+                    errorRedirectUrl = String.format(errorRedirectTpl, code + "");
+                } catch (IllegalFormatException ife) {
+                    errorRedirectUrl = errorRedirectTpl.replace("%s", code + "").replace("%d", code + "");
+                }
                 response.setStatus(302);
                 response.setHeader("Location", errorRedirectUrl);
             } else {

@@ -74,14 +74,21 @@ public class ServerLog {
         if (!webLogEnable)
             return false;
 
-        type = (type + "").toUpperCase();
+        // C3 fix: trim each configured type before comparing so a config like
+        // "GET, POST" (with a space after the comma) still matches "POST".
+        type = (type + "").trim().toUpperCase();
 
         String typeParam = config.getString("Type", null);
 
         if (typeParam != null) {
-            List<String> typeParams = Arrays.asList(typeParam.split(","));
-
-            if (typeParams.indexOf(type) < 0)
+            boolean matched = false;
+            for (String t : typeParam.split(",")) {
+                if (t.trim().equalsIgnoreCase(type)) {
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched)
                 return false;
         }
 
@@ -135,8 +142,11 @@ public class ServerLog {
                                         String.format("Can not write to log file '%s'", webLogFile.getAbsolutePath()));
                         }
 
-                        int suffixIndex = webLogFile.getName().lastIndexOf(".");
-                        String logFileNamePrefix = webLogFile.getName().substring(0, suffixIndex);
+                        // B19 fix (defensive): a filename without a "." used to
+                        // throw StringIndexOutOfBoundsException at substring(0, -1).
+                        String logFileName = webLogFile.getName();
+                        int suffixIndex = logFileName.lastIndexOf(".");
+                        String logFileNamePrefix = suffixIndex > 0 ? logFileName.substring(0, suffixIndex) : logFileName;
                         long logSize = FileTools.size(webLogFile);
                         if (!webLogFile.exists()) {
                             FileTools.write(webLogFile, header, false);

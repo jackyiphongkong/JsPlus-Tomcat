@@ -62,6 +62,7 @@ import com.killcoding.ext.Json;
 import com.killcoding.log.Logger;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import org.apache.tomcat.util.descriptor.web.FilterMap;
 import org.apache.tomcat.util.descriptor.web.FilterDef;
 import org.apache.tomcat.util.net.SSLHostConfig;
@@ -172,6 +173,12 @@ public class TomcatServer {
 		this.sslPort = paramsCp.getInteger("sslPort", this.port);
 		this.hostname = paramsCp.getString("hostname", "localhost");
 		this.enableSSL = paramsCp.getBoolean("SSL.enable", false);
+		// B15 fix: surface the ambiguous config where HTTP and HTTPS share one
+		// port instead of silently serving both protocols on the same port.
+		if (this.enableSSL && this.sslPort == this.port) {
+			Logger.systemWarn(TomcatServer.class,
+					"SSL.enable=true but 'sslPort' is not set (defaults to port={}); the same port will serve both HTTP and HTTPS.", this.port);
+		}
 		this.http2Enable = paramsCp.getBoolean("Http2.enable", false);
 		this.http2MaxConcurrentStreams = paramsCp.getInteger("Http2.maxConcurrentStreams", 200);
 		this.keyRoot = paramsCp.getString("keyRoot", TOMCAT_HOME + "/key/");
@@ -191,6 +198,8 @@ public class TomcatServer {
 		this.compressionEnable = paramsCp.getBoolean("compressionEnable", false);
 		this.compressableMimeType = paramsCp.getString("compressableMimeType", null);
 		this.compressionMinSize = paramsCp.getInteger("compressionMinSize", 1024);
+		// B12 fix: keep a static snapshot for the static SSL host APIs.
+		staticConfig = paramsCp;
 
 		Iterator<Object> itr = paramsCp.keySet().iterator();
 		while (itr.hasNext()) {
@@ -270,7 +279,16 @@ public class TomcatServer {
 
 	private void loadSSLHost(SSLHostConfig sslHostConfig) {
 		int keystoreFileSize = keystoreFile.size();
-		for (int i = 0; i < keystoreFileSize; i++) {
+		// B7 fix: guard against config where the three array lengths differ —
+		// the old loop used keystoreFile.size() as the bound and threw
+		// IndexOutOfBoundsException (failing the whole SSL connector init).
+		int certCount = Math.min(keystoreFileSize, Math.min(keystorePass.size(), keyAlias.size()));
+		if (certCount < keystoreFileSize) {
+			Logger.systemWarn(TomcatServer.class,
+					"SSL.keystoreFile has {} entry/entries but SSL.keystorePass/SSL.keyAlias only {}; configuring {} certificate(s).",
+					keystoreFileSize, certCount, certCount);
+		}
+		for (int i = 0; i < certCount; i++) {
 			String _keystoreFile = (String) keystoreFile.get(i);
 			String _keystorePass = (String) keystorePass.get(i);
 			String _keyAlias = (String) keyAlias.get(i);
@@ -438,7 +456,7 @@ public class TomcatServer {
 							params.put(tccpKey, tccpVal);
 							Logger.systemMark(TomcatServer.class, "Param: {}={}", tccpKey, tccpVal);
 						}
-						TomcatScriptConsole.setPoolSize(cp.getInteger("TomcatScriptConsole.poolSize", 100));
+						TomcatScriptConsole.setPoolSize(cp.getInteger("TomcatScriptConsole.poolSize", 1000));
 						TomcatScriptConsole.setCacheSeconds(cp.getInteger("TomcatScriptConsole.cacheSeconds", 60));
 						TomcatScriptConsole.setFreedDelayMs(cp.getLong("TomcatScriptConsole.freedDelayMs", 1000L));
 						TomcatScriptConsole.setEngineName(cp.getString("TomcatScriptConsole.engineName", "graalvm.js"));
@@ -468,8 +486,40 @@ public class TomcatServer {
 		return tomcat;
 	}
 
+	/** B12 fix: static config snapshot so the static SSL host APIs can read
+	 *  SSL.keystoreEncryptKey (the master AES key that must never be stored
+	 *  in the DB next to the encrypted keystore password). */
+	private static volatile ConfigProperties staticConfig;
+
+	/** B3 fix: shared daemon lifecycle executor reused by start()/stop() — the
+	 *  old code leaked a new single-thread pool on every call. */
+	private volatile ExecutorService lifecycleExecutor;
+
+	private static String sslEncryptKeyConfig() {
+		return staticConfig != null ? staticConfig.getString("SSL.keystoreEncryptKey", null) : null;
+	}
+
+	private ExecutorService lifecycleExecutor() {
+		ExecutorService e = lifecycleExecutor;
+		if (e == null || e.isShutdown()) {
+			synchronized (this) {
+				e = lifecycleExecutor;
+				if (e == null || e.isShutdown()) {
+					ThreadFactory tf = r -> {
+						Thread t = new Thread(r, "jsplus-tomcat-lifecycle");
+						t.setDaemon(true);
+						return t;
+					};
+					e = Executors.newSingleThreadExecutor(tf);
+					lifecycleExecutor = e;
+				}
+			}
+		}
+		return e;
+	}
+
 	public void start(Map<String, String> params) {
-		ExecutorService exec = Executors.newFixedThreadPool(1);
+		ExecutorService exec = lifecycleExecutor();
 		exec.execute(new Runnable() {
 			@Override
 			public void run() {
@@ -838,7 +888,7 @@ public class TomcatServer {
 			return;
 		}
 
-		ExecutorService exec = Executors.newFixedThreadPool(1);
+		ExecutorService exec = lifecycleExecutor();
 		exec.execute(new Runnable() {
 			@Override
 			public void run() {
@@ -860,6 +910,9 @@ public class TomcatServer {
 								latch.countDown();
 							}
 						});
+						// B3 fix: daemon so a stuck server.await() can never keep
+						// the JVM alive.
+						waitThread.setDaemon(true);
 						waitThread.start();
 
 						boolean stopped = latch.await(30, TimeUnit.SECONDS);
@@ -914,10 +967,16 @@ public class TomcatServer {
 				String port = (String) item.get("port");
 				Object uriObj = item.get("uri");
 				String uri = (uriObj == null) ? "" : ("" + uriObj);
-				String paramValue = (String) item.get("param_value");
-				Map<String, Object> domainParams = Json.parse(paramValue);
-				Map<String, Object> resMap = DomainProxy.setDomainMapping(domain, port, uri, domainParams);
-				Logger.systemMark(TomcatServer.class, resMap);
+				try {
+					// C11 fix: one row with a broken param_value used to abort
+					// the whole load; skip the bad row, keep loading the rest.
+					String paramValue = (String) item.get("param_value");
+					Map<String, Object> domainParams = Json.parse(paramValue);
+					Map<String, Object> resMap = DomainProxy.setDomainMapping(domain, port, uri, domainParams);
+					Logger.systemMark(TomcatServer.class, resMap);
+				} catch (Exception rowErr) {
+					log.warn("Skipped broken DomainMapping {}:{}:{}: {}", domain, port, uri, rowErr.getMessage());
+				}
 			}
 		} catch (Exception e) {
 			log.error(e.getMessage(), e);
@@ -939,7 +998,14 @@ public class TomcatServer {
 			for (Map<String, Object> item : list) {
 				String hostname = (String) item.get("hostname");
 				String keystoreFile = (String) item.get("keystore_file");
-				String keystorePass = decryptKeystorePass((String) item.get("encrypt_key"),
+				// B12 fix: rows written with the master key carry an empty
+				// encrypt_key; fall back to the configured master key so they
+				// still decrypt. Legacy rows keep their own stored key.
+				String rowKey = (String) item.get("encrypt_key");
+				String masterKey = sslEncryptKeyConfig();
+				String decryptKey = (CommonTools.isBlank(rowKey) && masterKey != null && !masterKey.isEmpty())
+						? masterKey : rowKey;
+				String keystorePass = decryptKeystorePass(decryptKey,
 						(String) item.get("keystore_pass"));
 				String keyAlias = (String) item.get("key_alias");
 				try {
@@ -995,14 +1061,19 @@ public class TomcatServer {
 				return resMap;
 			}
 			String encryptMode = "AES";
-			String encryptKey = CommonTools.generateId(256);
+			// B12 fix: when SSL.keystoreEncryptKey is configured, use it as the
+			// master AES key and store NOTHING in the encrypt_key column (a
+			// plaintext key next to its ciphertext made the DB dump self-decrypting).
+			String masterKey = sslEncryptKeyConfig();
+			boolean useMaster = masterKey != null && !masterKey.isEmpty();
+			String encryptKey = useMaster ? "" : CommonTools.generateId(256);
 			Timestamp currentTime = new Clock().getSqlTimestamp();
 			Connection conn = Db.getConnection();
 			Map<String, Object> params = new HashMap<String, Object>();
 			params.put("id", CommonTools.generateId(16));
 			params.put("hostname", hostname);
 			params.put("keystore_file", keystoreFile);
-			params.put("keystore_pass", encryptKeystorePass(encryptKey, keystorePass));
+			params.put("keystore_pass", encryptKeystorePass(useMaster ? masterKey : encryptKey, keystorePass));
 			params.put("key_alias", keyAlias);
 			params.put("encrypt_mode", encryptMode);
 			params.put("encrypt_key", encryptKey);
@@ -1064,9 +1135,13 @@ public class TomcatServer {
 			}
 			// Reuse the row's own AES key; assign a fresh one only for legacy
 			// plaintext rows (written before encryption was supported).
-			String encryptKey = (String) existing.get("encrypt_key");
+			// B12 fix: when SSL.keystoreEncryptKey is configured it becomes the
+			// master key and the encrypt_key column stores nothing.
+			String masterKey = sslEncryptKeyConfig();
+			boolean useMaster = masterKey != null && !masterKey.isEmpty();
+			String encryptKey = useMaster ? "" : (String) existing.get("encrypt_key");
 			String encryptMode = (String) existing.get("encrypt_mode");
-			if (CommonTools.isBlank(encryptKey)) {
+			if (!useMaster && CommonTools.isBlank(encryptKey)) {
 				encryptKey = CommonTools.generateId(256);
 				encryptMode = "AES";
 			}
@@ -1075,7 +1150,7 @@ public class TomcatServer {
 			Map<String, Object> params = new HashMap<String, Object>();
 			params.put("id", existing.get("id"));
 			params.put("keystore_file", keystoreFile);
-			params.put("keystore_pass", encryptKeystorePass(encryptKey, keystorePass));
+			params.put("keystore_pass", encryptKeystorePass(useMaster ? masterKey : encryptKey, keystorePass));
 			params.put("key_alias", keyAlias);
 			params.put("encrypt_mode", encryptMode);
 			params.put("encrypt_key", encryptKey);
@@ -1137,6 +1212,12 @@ public class TomcatServer {
 	public static Map<String, Object> queryDomainSslHost(String hostname) {
 		Map<String, Object> resMap = new HashMap<String, Object>();
 		String msg = "";
+		// B10 fix: null/blank hostname used to NPE at toLowerCase().
+		if (CommonTools.isBlank(hostname)) {
+			resMap.put("code", 0);
+			resMap.put("msg", "The param 'hostname' is required.");
+			return resMap;
+		}
 		try {
 			hostname = hostname.toLowerCase();
 			Map<String, Object> result = getDomainSslHost(hostname);

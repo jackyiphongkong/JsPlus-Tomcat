@@ -163,6 +163,13 @@ check({
     command: "for (i=0;i<" + total + ";i++) TomcatScriptConsole.getDomainParams(\"" + script + "\");"
 });
 
+// Case F4.5 — hard pool number after all traffic: print the ACTUAL console
+// pool size vs the configured poolSize. Under load other threads may be using
+// consoles, so this is informational (a dead-number eyeball check) not a
+// pass/fail gate — the F4 usage baseline assertion already proves restoration.
+print("[Freed] Pool size after all traffic: " + TSC.getConsolePoolSize()
+      + " / configured " + TSC.getPoolSize() + " (usage final=" + round3(uFinal) + ")");
+
 // Case F5 — freed() on the Loaded (existing script) path: getDomainParams on
 // an existing script (sample.js) must also free the console after eval.
 var uL0 = TSC.usage();

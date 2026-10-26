@@ -106,6 +106,20 @@ TomcatEmbed.prototype.removeDomainAuthUser = function(domain, port, username){
     return resMap.msg;
 }
 
+TomcatEmbed.prototype.setAuthLockPolicy = function(domain, port, maxAttempts, lockMinutes){
+    var the = this;
+    var resMap = SecurityFilter.setAuthLockPolicy(domain, port, maxAttempts, lockMinutes);
+    System.out.println(resMap.msg);
+    return resMap.msg;
+}
+
+TomcatEmbed.prototype.unlockAuthUser = function(domain, port, username){
+    var the = this;
+    var resMap = SecurityFilter.unlockAuthUser(domain, port, username);
+    System.out.println(resMap.msg);
+    return resMap.msg;
+}
+
 // setDomainMapping(domain, port, domainParams)          -> catch-all mapping (uri "")
 // setDomainMapping(domain, port, uri, domainParams)     -> uri-prefix-specific mapping
 TomcatEmbed.prototype.setDomainMapping = function(domain, port, uriOrParams, domainParams){

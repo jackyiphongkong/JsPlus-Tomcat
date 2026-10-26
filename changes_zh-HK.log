@@ -76,3 +76,98 @@ v8.0.34  2026-10-25 22:07:42
 # [驗證] 完整 TestAll（7 個套件）：123 passed, 0 failed。LoadTest：
 #   10000/10000 成功，qps=258.6，avg=38ms，p50=37ms，p99=79ms，max=114ms。
 #
+v8.0.35  2026-10-25 22:35:38  
+v8.0.37  2026-10-25 22:40:29  
+v8.0.38  2026-10-25 22:42:38  
+v8.0.39  2026-10-25 22:45:46  
+# [ä¿®å¾©] B2-B19 Java æ ¸å¿ƒéŒ¯èª¤ä¸€è¼ªï¼ˆ2026-10-25ï¼‰ï¼š
+#   B2  DomainProxy.doFilter - æ‰€æœ‰ç¨‹å¼è·¯å¾‘ä¸€å¾‹é‡‹æ”¾ consoleï¼ˆfinallyï¼‰ã€‚
+#   B3  TomcatServer.start/stop - å…±ç”¨ daemon lifecycle executor + waitThread daemon åŒ–ã€‚
+#   B4  SecurityFilter.checkUserFromCache - æ¯å¸³è™ŸéŽ–ï¼ˆdouble-checkedï¼‰ï¼Œ
+#       failed_attempts å””æœƒå†å–ºä¸¦ç™¼ä¸‹é‡è¤‡ç´¯ç©ã€‚
+#   B5  SecurityFilter Basic èªè­‰ - ä¾ RFC 7235 scheme å¤§å°å¯«ä¸æ•æ„Ÿ + ç„¡ ':' é˜²è­·
+#       ï¼ˆåŽŸæœ¬ AIOOBE é€€åŒ–æˆ 401ï¼‰ã€‚
+#   B6  TomcatScriptConsole.initScriptConsole(engine) è€Œå®¶æœƒæŽ¡ç”¨å‚³å…¥åƒæ•¸ã€‚
+#   B7  TomcatServer.loadSSLHost - keystoreFile/Pass/Alias é™£åˆ—é•·åº¦å–æœ€å°é˜²è­·ã€‚
+#   B8  DomainProxy.removeDomainMappingï¼ˆcatch-allï¼‰ä¸€ä½µè»Ÿåˆª uri-specific DB è¨˜éŒ„ã€‚
+#   B9  IpAttackDefense - uri_pattern ç·¨è­¯å¿«å–ï¼ˆå””å†æ¯æ¬¡è«‹æ±‚ Pattern.compileï¼‰ã€‚
+#   B10 TomcatServer.queryDomainSslHost(null) - åŠ  blank æª¢æŸ¥ï¼ˆä¿® NPEï¼‰ã€‚
+#   B11 DomainProxy - è«‹æ±‚é«”ä¸Šé™ 10 MBï¼ˆä¿® readAllBytes OOMï¼Œå›ž 413ï¼‰ã€‚
+#   B12 TomcatServer - æ”¯æ´ SSL.keystoreEncryptKey ä¸»å¯†é‘°ï¼›é…ç½®å’—ä¹‹å¾Œ encrypt_key
+#       å””å†æ˜Žæ–‡å­˜ DBï¼ˆèˆŠè¨˜éŒ„ä»ç„¶å…¼å®¹ï¼‰ã€‚
+#   B13 IpAttackDefense - æ»‘å‹•çª—å£è¨ˆæ•¸åŽŸå­åŒ–ï¼ˆper-key lockï¼‰ã€‚
+#   B14 DomainProxy - URI_PREFIX_REGISTRY åŠ éŽ–ï¼ˆå””æœƒå† ConcurrentModificationExceptionï¼‰ã€‚
+#   B15 TomcatServer - SSL.enable=true ä¸” sslPort==port æ™‚ç™¼å‡ºè­¦å‘Šã€‚
+#   B16 IpFilter/DomainProxy/SecurityFilter - errorRedirectUrl è¨­å®šéŒ¯èª¤å””å†ä»¤è«‹æ±‚è·¯å¾‘å´©æ½°ã€‚
+#   B17 SecurityFilter - æ‹¼éŒ¯å˜… cache key 'ScurityFilter' ä¿®æ­£ç‚º 'SecurityFilter'ã€‚
+#   B18 TomcatServer - TomcatScriptConsole.poolSize é è¨­å€¼å°é½Š 1000ã€‚
+#   B19 ServerLog - æª”æ¡ˆåç„¡ '.' å””å†æ‹‹ç•°å¸¸ï¼ˆé˜²ç¦¦æ€§ï¼‰ã€‚
+#   DB-CLOSE SecurityFilter resetAuthLockout/updateAuthUserLock - connection ç§»å…¥
+#       try å…§ï¼Œæ—©æœŸç•°å¸¸å””æœƒæ¼ closeã€‚
+#   åŸºå»º test/diff-check.ps1 + diff-check.sh é‡å»ºï¼ˆå…©å€‹è…³æœ¬åŽŸæœ¬å””è¦‹å’—ï¼Œä»¤
+#       "found diffed" changelog note éœé»˜å¤±æ•ˆï¼‰ï¼›build.xml diff-check-win æ”¹ç”¨
+#       -Commandï¼Œæ··åˆåˆ†éš”è·¯å¾‘å¯ä»¥æ­£å¸¸è§£æžã€‚
+# [é©—è­‰] æ¯çµ„ä¹‹å¾Œè·‘å®Œæ•´ TestAllï¼ˆ7 suiteï¼‰ï¼š123 passed, 0 failed å…± 3 æ¬¡ã€‚
+#   LoadTestï¼ˆæœ€çµ‚ï¼‰ï¼š10000/10000 æˆåŠŸï¼Œqps=259.9ï¼Œavg=38msï¼Œp50=33msï¼Œ
+#   p90=51msï¼Œp99=106msï¼Œmax=232msã€‚
+#v8.0.40  2026-10-25 22:50:25  
+v8.0.41  2026-10-25 22:51:10  
+v8.0.42  2026-10-25 22:56:51  
+v8.0.43  2026-10-26 06:54:10  
+# [修復] C1-C12 Bug 全面審查（2026-10-26）：
+#   C1  IpAttackDefense queryDefenseRules/queryIpBans/queryIpRequestLogs — 每次
+#       呼叫都漏 close JDBC connection（無 finally），長跑後 pool 會耗盡。
+#   C2  SecurityFilter.getDomainAuthUser — 對無 domain_auth 記錄嘅 domain:port 直接
+#       NPE（拋原生異常，唔係「無記錄」結果）。
+#   C3  ServerLog.writeWebLog — config type 比對逐項 trim（"GET, POST" 尾空格
+#       依家都 match 到 "POST"）。
+#   C4  IpFilter.cidrMatch — 拒絕超出範圍嘅 prefix（例如 /-1、/99）。
+#   C5  IpFilter.removeDomainIpRuleByBan — 驗證 affected rows；未知 banId 依家
+#       返 code 0，唔再假報成功。
+#   C6  SecurityFilter.createDomainAuth/createDomainAuthUser — 加 synchronized，
+#       防止併發重複寫入。
+#   C7  SecurityFilter.getDomainAuth/checkDomainAuthEnable — domain/port 查詢
+#       改為大小寫唔敏感（同 IpFilter 對齊）。
+#   C8  TomcatScriptConsole.getDomainParams/getResponseFilter — scriptFile 拒絕
+#       path traversal／絕對路徑／磁碟機代號（isSafeScriptFile）。
+#   C9  DomainProxy.doFilter — mode "forward"/"redirect" 依家大小寫唔敏感
+#       （同 "internal" 對齊）。
+#   C10 TomcatScriptConsole.freed() — 對從未持有 console 嘅線程唔再攞新 console
+#       （只有線程有 mark 先 clear()）。
+#   C11 TomcatServer.loadDomainMapping — 一條損壞 param_value 唔再令全部 mapping
+#       唔載入；壞行跳過並寫警告。
+#   C12 DomainProxy.createDomainMappingParam/updateDomainMappingParam — 加
+#       synchronized 關閉 create-vs-create race。
+# [驗證] 完整 TestAll（7 suite）：123 passed, 0 failed。LoadTest：
+#   10000/10000 成功，qps=251，avg=39ms，p50=38ms，p99=75ms，max=142ms。
+#
+
+v8.0.44  2026-10-26 07:02:09  
+
+
+# 2026-10-26（人手更新）— CacheArray sweep + ServerLog 大量寫入壓力測試
+# [修復] jsplus-core CacheArray.java（D:\Working\JsPlus，已重建
+#   jsplus-embed-6.1.0.jar → LibHome\jsplus\default\）：
+#   * 新增 sweepProcessed(int count)：線程安全嘅頭部回收。filter 線程已經
+#     持久化嘅資料列會被回收，唔會令快取無限增長。synchronized；只掂頭部，
+#     並發 add() 永遠加喺尾部，所以新資料列永遠唔會被誤刪。O(n) 一次過
+#     （removeAll），避免逐個移除嘅陣列移位。
+#   * filter() 循環依家喺 executeBatch 之後即刻 call sweepProcessed(index)
+#     （即批次已落盤之後），並同步調整局部 index，令快取喺持續負載下維持
+#     喺大約一個批次嘅量。喺全局多線程存取下安全（ServerLog.webLogCacheArray
+#     係 static／request 線程共享）。其他 CacheArray.filter 用家唔受影響，
+#     除非佢哋自己 call sweep。
+# [新增] test/TestServerLog.js — 第 8 個 TestAll 套件（11 個檢查 S1-S11）：
+#   harness 就緒、setParams/getParams round-trip、Enable=false 閘、Type 匹配
+#   （C3 回歸）、CSV flush + header 行、資料列內容（domain/uri/type）、
+#   Allowed[] regex 過濾、ParamMaxLength 截斷、還原 config、cleanup。
+#   Console 模式執行會用 Class.forName 反射 reset 共享 static webLogCacheArray，
+#   令 flush 用套件自己嘅短 LogTimer。
+# [新增] test/TestServerLogStress.js — 獨立大量寫入壓力測試（預設 5000 條）：
+#   每條寫入都返 true、CSV drain header + N 行、首尾行完整、CacheArray 已排水
+#   （B4：size 必須 << total——修復前係 5000，依家係 0）、還原 config +
+#   刪除暫存資料夾；結尾用 Runtime.halt(0)（因為 CacheArray filter 線程令
+#   JVM 唔退）。
+# [驗證] 壓力測試：5 passed / 0 failed（cacheSize=0）。完整 TestAll（8 suite）：
+#   134 passed, 0 failed。LoadTest：10000/10000 成功，qps=263.5，avg=37ms，
+#   p50=36ms，p99=80ms，max=152ms。

@@ -28,8 +28,10 @@ import java.sql.Connection;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.IllegalFormatException;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import com.killcoding.log.LoggerFactory;
 import com.killcoding.tool.Base64Tools;
@@ -58,6 +60,15 @@ public class SecurityFilter implements Filter {
 
     private static ConfigProperties config = new ConfigProperties();
 
+    /** B4 fix: per-account locks so racing threads on the same cache miss can
+     *  never double-increment the failed-attempt counter (which used to lock
+     *  accounts early under concurrency). */
+    private static final ConcurrentHashMap<String, Object> AUTH_CHECK_LOCKS = new ConcurrentHashMap<>();
+
+    private static Object authCheckLock(String key) {
+        return AUTH_CHECK_LOCKS.computeIfAbsent(key, k -> new Object());
+    }
+
     public SecurityFilter() {
         super();
     }
@@ -83,14 +94,20 @@ public class SecurityFilter implements Filter {
                     boolean allowed = false;
                     String authorization = request.getHeader("Authorization");
                     if (!CommonTools.isBlank(authorization)) {
-                        String userAndPassBase64 = authorization.replaceFirst("Basic[^\\S]+", "");
-                        String userAndPass = new String(Base64Tools.decode(userAndPassBase64));
-                        String[] up = userAndPass.split(":", 2);
-                        String user = up[0];
-                        String pass = up[1];
-                        allowed = checkUserFromCache(request,domain, port, user, pass);
-
-                        if(!allowed) allowed = checkUserFromCache(request,"0", "0", user, pass);
+                        // B5 fix: the Basic scheme is case-insensitive per
+                        // RFC 7235 (old code only matched "Basic "); a missing
+                        // ":" in the decoded pair used to throw AIOOBE at up[1].
+                        String[] authParts = authorization.trim().split("\\s+", 2);
+                        if (authParts.length == 2 && authParts[0].equalsIgnoreCase("Basic")) {
+                            String userAndPass = new String(Base64Tools.decode(authParts[1].trim()));
+                            String[] up = userAndPass.split(":", 2);
+                            if (up.length == 2) {
+                                String user = up[0];
+                                String pass = up[1];
+                                allowed = checkUserFromCache(request, domain, port, user, pass);
+                                if (!allowed) allowed = checkUserFromCache(request, "0", "0", user, pass);
+                            }
+                        }
                     }
                     if (allowed) {
                         chain.doFilter(request, response);
@@ -130,20 +147,27 @@ public class SecurityFilter implements Filter {
         String cacheKey = String.format("%s:%s.%s",domain,port,username);
         Boolean userAuthed = (Boolean)Cache.get(cacheKey);
         if(userAuthed == null){
-            userAuthed = checkUser( domain, port, username, pass);
-            if (userAuthed != null && userAuthed.booleanValue()) {
-                // Only successful results are cached. Failed attempts must
-                // reach checkUser() every time so the failed-attempt counter
-                // and the account lockout (failed_attempts / locked_until)
-                // stay accurate.
-                Integer cacheSeconds = config.getInteger("SecurityFilter.cacheSeconds", 60);
-                Cache.set(cacheKey,userAuthed,cacheSeconds);
+            // B4 fix: serialise concurrent misses for the same account (double
+            // checked locking) so the failed-attempt counter stays accurate.
+            synchronized (authCheckLock(cacheKey)) {
+                userAuthed = (Boolean) Cache.get(cacheKey);
+                if (userAuthed == null) {
+                    userAuthed = checkUser(domain, port, username, pass);
+                    if (userAuthed != null && userAuthed.booleanValue()) {
+                        // Only successful results are cached. Failed attempts must
+                        // reach checkUser() every time so the failed-attempt counter
+                        // and the account lockout (failed_attempts / locked_until)
+                        // stay accurate.
+                        Integer cacheSeconds = config.getInteger("SecurityFilter.cacheSeconds", 60);
+                        Cache.set(cacheKey,userAuthed,cacheSeconds);
+                    }
+                    String logType = userAuthed ? "Authorized" : "Unauthorized";
+                    String paramsMsg = String.format("username=%s",username);
+                    ServerLog.writeWebLog(domain, port, request.getRequestURI(), logType,
+                    System.currentTimeMillis(),
+                    request.getQueryString(), ServerLog.getHeaders(request),paramsMsg,request.getRemoteAddr());
+                }
             }
-            String logType = userAuthed ? "Authorized" : "Unauthorized";
-            String paramsMsg = String.format("username=%s",username);
-            ServerLog.writeWebLog(domain, port, request.getRequestURI(), logType,
-            System.currentTimeMillis(),
-            request.getQueryString(), ServerLog.getHeaders(request),paramsMsg,request.getRemoteAddr());
         }
         return userAuthed;
     }
@@ -238,9 +262,11 @@ public class SecurityFilter implements Filter {
 
     private static void resetAuthLockout(Map<String, Object> user) throws Exception {
         String sql = "UPDATE domain_auth_user SET failed_attempts = 0, locked_until = NULL, updated_at = :updated_at WHERE id = :id";
-        Connection conn = Db.getConnection();
         CacheDriverExecutor cde = null;
         try {
+            // DB-CLOSE fix: acquire the connection inside the try so an early
+            // exception cannot leak it (the old code got it before the try).
+            Connection conn = Db.getConnection();
             Map<String, Object> params = new HashMap<String, Object>();
             params.put("id", user.get("id"));
             params.put("updated_at", new Clock().getSqlTimestamp());
@@ -253,9 +279,11 @@ public class SecurityFilter implements Filter {
 
     private static void updateAuthUserLock(Map<String, Object> user, int failedAttempts, Timestamp lockedUntil) throws Exception {
         String sql = "UPDATE domain_auth_user SET failed_attempts = :failed_attempts, locked_until = :locked_until, updated_at = :updated_at WHERE id = :id";
-        Connection conn = Db.getConnection();
         CacheDriverExecutor cde = null;
         try {
+            // DB-CLOSE fix: acquire the connection inside the try so an early
+            // exception cannot leak it (the old code got it before the try).
+            Connection conn = Db.getConnection();
             Map<String, Object> params = new HashMap<String, Object>();
             params.put("id", user.get("id"));
             params.put("failed_attempts", failedAttempts);
@@ -270,7 +298,7 @@ public class SecurityFilter implements Filter {
 
     private synchronized boolean isAuthEnable(String domain, String port) throws Exception {
         String domainPort = String.format("%s:%s", domain, port);
-        String domainPortKey = String.format("ScurityFilter.%s.authEnable", domainPort);
+        String domainPortKey = String.format("SecurityFilter.%s.authEnable", domainPort);
         Boolean authEnable = (Boolean) Cache.get(domainPortKey);
 
         if (authEnable == null) {
@@ -289,6 +317,12 @@ public class SecurityFilter implements Filter {
             port = port.toLowerCase();
             username = username.toLowerCase();
             Map<String,Object> domainAuth = getDomainAuth(domain, port);
+            // C2 fix: a query against a domain:port without a domain_auth row
+            // used to NPE at domainAuth.get("id") and escape as a raw exception
+            // instead of a "no records" result.
+            if (domainAuth == null) {
+                return null;
+            }
             Connection conn = Db.getConnection();
             Map<String, Object> params = new HashMap<String, Object>();
             params.put("domain_auth_id", domainAuth.get("id"));
@@ -485,7 +519,9 @@ public class SecurityFilter implements Filter {
         }
     }    
 
-    public static Map<String, Object> createDomainAuthUser(String domain, String port, String username,String plaintextPass) {
+    // C6 fix: serialise creates so two racing calls cannot both pass the
+    // duplicate check and write two domain_auth_user rows for the same login.
+    public synchronized static Map<String, Object> createDomainAuthUser(String domain, String port, String username,String plaintextPass) {
         Map<String, Object> resMap = new HashMap<>();
         if(CommonTools.isBlank(domain)){
             resMap.put("code",0);
@@ -554,7 +590,9 @@ public class SecurityFilter implements Filter {
         }
     }
 
-    public static Map<String,Object> createDomainAuth(String domain, String port, Boolean authEnable) {
+    // C6 fix: serialise creates so two racing calls cannot both write a
+    // duplicate domain_auth row for the same domain:port.
+    public synchronized static Map<String,Object> createDomainAuth(String domain, String port, Boolean authEnable) {
         Map<String,Object> resMap = new HashMap<String,Object>();
 
         String sql = "INSERT INTO domain_auth (id,domain,port,auth_enable,encrypt_mode,encrypt_key,created_at,updated_at,deleted_at,deleted) VALUES (:id,:domain,:port,:auth_enable,:encrypt_mode,:encrypt_key,:created_at,:updated_at,:deleted_at,:deleted)";
@@ -679,8 +717,10 @@ public class SecurityFilter implements Filter {
         try {
             Connection conn = Db.getConnection();
             Map<String, Object> params = new HashMap<String, Object>();
-            params.put("domain", domain);
-            params.put("port", port);
+            // C7 fix: normalise case here so lookups are case-insensitive even
+            // when the caller did not lower-case first (IpFilter already does).
+            params.put("domain", domain == null ? "" : domain.toLowerCase());
+            params.put("port", port == null ? "" : port.toLowerCase());
             params.put("deleted", false);
             cde = new CacheDriverExecutor(conn);
             return cde.first(sql, params);
@@ -876,8 +916,9 @@ public class SecurityFilter implements Filter {
         try {
             Connection conn = Db.getConnection();
             Map<String, Object> params = new HashMap<String, Object>();
-            params.put("domain", domain);
-            params.put("port", port);
+            // C7 fix: same case-insensitive lookup as getDomainAuth.
+            params.put("domain", domain == null ? "" : domain.toLowerCase());
+            params.put("port", port == null ? "" : port.toLowerCase());
             params.put("deleted", false);
             cde = new CacheDriverExecutor(conn);
             Map<String, Object> result = cde.first(sql, params);
@@ -894,8 +935,16 @@ public class SecurityFilter implements Filter {
         if (!response.isCommitted()) {
             boolean errorRedirectEnable = config.getBoolean("errorRedirectEnable", false);
             if (errorRedirectEnable) {
-                String errorRedirectUrl = String.format(
-                        config.getString("errorRedirectUrl", "http://errorRedirectUrl/%s.html"), code + "");
+                // B16 fix: never crash the request path on a mis-configured
+                // errorRedirectUrl (a template without %s, or with a foreign
+                // format spec, used to throw IllegalFormatConversionException).
+                String errorRedirectTpl = config.getString("errorRedirectUrl", "http://errorRedirectUrl/%s.html");
+                String errorRedirectUrl;
+                try {
+                    errorRedirectUrl = String.format(errorRedirectTpl, code + "");
+                } catch (IllegalFormatException ife) {
+                    errorRedirectUrl = errorRedirectTpl.replace("%s", code + "").replace("%d", code + "");
+                }
                 response.setStatus(302);
                 response.setHeader("Location", errorRedirectUrl);
             } else {
