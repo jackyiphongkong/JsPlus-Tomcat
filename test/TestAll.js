@@ -7,14 +7,15 @@
 //            (TestBase.js) itself and runs against the live console's Tomcat,
 //            H2 data source and global `tomcat` object.
 // Output   : Runs, in order:
-//              1) TestDomainProxy.js    -> <PROJECT_ROOT>/test_reports/TestDomainProxy-Report.html
-//              2) TestSecurityFilter.js -> <PROJECT_ROOT>/test_reports/TestSecurityFilter-Report.html
-//              3) TestIpFilter.js       -> <PROJECT_ROOT>/test_reports/TestIpFilter-Report.html
-//              4) TestIpAttackDefense.js-> <PROJECT_ROOT>/test_reports/TestIpAttackDefense-Report.html
-//              5) TestTomcatServer.js    -> <PROJECT_ROOT>/test_reports/TestTomcatServer-Report.html
-//              6) TestAuthLockout.js     -> <PROJECT_ROOT>/test_reports/TestAuthLockout-Report.html
-//              7) TestFreed.js           -> <PROJECT_ROOT>/test_reports/TestFreed-Report.html
-//              8) TestServerLog.js       -> <PROJECT_ROOT>/test_reports/TestServerLog-Report.html
+//              1) TestDomainProxy.js    -> docs/latest/report/TestDomainProxy-Report.html
+//              2) TestSecurityFilter.js -> docs/latest/report/TestSecurityFilter-Report.html
+//              3) TestIpFilter.js       -> docs/latest/report/TestIpFilter-Report.html
+//              4) TestIpAttackDefense.js-> docs/latest/report/TestIpAttackDefense-Report.html
+//              5) TestTomcatServer.js    -> docs/latest/report/TestTomcatServer-Report.html
+//              6) TestAuthLockout.js     -> docs/latest/report/TestAuthLockout-Report.html
+//              7) TestFreed.js           -> docs/latest/report/TestFreed-Report.html
+//              8) TestServerLog.js       -> docs/latest/report/TestServerLog-Report.html
+//            (each is also mirrored to the legacy test_reports/ folder)
 //            This entry point then prints an aggregate pass/fail summary.
 // NOTE     : Each suite calls beginTest() and reports its own counters, so
 //            TestAll captures the counters right after each load() completes.
@@ -256,12 +257,17 @@ if (totalFail > 0) {
     print("ALL TESTS PASSED");
 }
 
-// Aggregate markdown summary into <PROJECT_ROOT>/test_reports/TestAll-Report.md
+// Aggregate markdown summary into docs/latest/report/TestAll-Report.md
+// (JsPlus-Core docs layout) plus a legacy copy under test_reports/.
 try {
     var File = Java.type("java.io.File");
-    var reportDir = new File(basePath + "../test_reports");
-    if (!reportDir.exists()) {
-        reportDir.mkdirs();
+    var primaryDir = new File(basePath + "../docs/latest/report");
+    if (!primaryDir.exists()) {
+        primaryDir.mkdirs();
+    }
+    var legacyDir = new File(basePath + "../test_reports");
+    if (!legacyDir.exists()) {
+        legacyDir.mkdirs();
     }
     var md = "# JsPlus-Tomcat TestAll Report\n\n";
     md += "Generated: " + new Date().toString() + "\n\n";
@@ -277,12 +283,16 @@ try {
     for (var m = 0; m < suiteResults.length; m++) {
         md += "| " + suiteResults[m].title + " | " + suiteResults[m].pass + " | " + suiteResults[m].fail + " |\n";
     }
-    var reportPath = basePath + "../test_reports/TestAll-Report.md";
+    var reportPath = basePath + "../docs/latest/report/TestAll-Report.md";
     var report = new DiskFile(reportPath);
     report.write(md, "UTF-8");
+    // Legacy copy (kept for existing CI artifact paths / local shortcuts).
+    var legacyMd = new DiskFile(basePath + "../test_reports/TestAll-Report.md");
+    legacyMd.write(md, "UTF-8");
     print("Markdown report written to " + reportPath);
 
-    // Aggregate HTML summary into <PROJECT_ROOT>/test_reports/TestAll-Report.html
+    // Aggregate HTML summary into docs/latest/report/TestAll-Report.html
+    // (plus the legacy test_reports/ copy).
     var html = "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n<title>JsPlus-Tomcat TestAll Report</title>\n"
         + "<style>\n"
         + "  body { font-family: Consolas, 'Courier New', monospace; background: #f5f6f8; margin: 24px; }\n"
@@ -315,14 +325,17 @@ try {
         html += "<tr><td>" + suiteResults[m2].title + "</td><td>" + suiteResults[m2].pass + "</td><td>" + suiteResults[m2].fail + "</td></tr>\n";
     }
     html += "</table>\n</body>\n</html>\n";
-    var htmlPath = basePath + "../test_reports/TestAll-Report.html";
+    var htmlPath = basePath + "../docs/latest/report/TestAll-Report.html";
     var report2 = new DiskFile(htmlPath);
     report2.write(html, "UTF-8");
+    var legacyHtml = new DiskFile(basePath + "../test_reports/TestAll-Report.html");
+    legacyHtml.write(html, "UTF-8");
     print("HTML report written to " + htmlPath);
 
     // CI summary (from TestBase.writeCiSummary) — compact Markdown that the
     // workflow appends to $GITHUB_STEP_SUMMARY (visible on the Actions run page)
-    // and that ships inside the uploaded test_reports/ artifact.
+    // and that ships inside the uploaded docs/latest/report/ artifact (also
+    // archived as docs/reports/<version>.jar).
     load(basePath + "../test/TestBase.js");
     writeCiSummary({
         title: "JsPlus-Tomcat CI Summary",

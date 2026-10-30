@@ -40,6 +40,17 @@ import java.util.concurrent.TimeUnit;
 import java.util.ArrayList;
 import java.util.stream.Collectors;
 
+/**
+ * Script-engine facade used by the embedded Tomcat: a fixed pool of
+ * {@link ScriptConsole} instances (one per request thread) with a master
+ * console that owns the data source, script-engine init and JVM-wide settings.
+ * <p>
+ * Every request acquires a pooled console via {@link #getConsole()}, runs
+ * domain/response scripts through {@link #eval(File, int)} / {@code evalScript}
+ * and returns it via {@link #freed()} (delayed by {@code freedDelayMs} on a
+ * shared daemon scheduler). The pool size is configurable and grows on demand
+ * up to {@code poolSize}.
+ */
 public class TomcatScriptConsole {
 
 	private static final Logger log = LoggerFactory.getLogger(TomcatScriptConsole.class);
@@ -72,14 +83,26 @@ public class TomcatScriptConsole {
 
 	private static ScriptConsole MasterConsole = null;
 
+	/** Whether the master console (and thus the script engine) is initialized. */
 	public synchronized static boolean isLoadedScriptEngine() {
 		return MasterConsole != null;
 	}
 
+	/**
+	 * Initializes the master console with the configured engine and pre-warms
+	 * the console pool (at least 10 consoles, growing to {@code poolSize}).
+	 */
 	public synchronized static void initScriptConsole() throws Exception {
 		initScriptConsole(getEngineName());
 	}
 
+	/**
+	 * Initializes the master console with the given engine name, then builds the
+	 * initial console pool. No-op when already initialized.
+	 *
+	 * @param initEngineName engine id (e.g. {@code graalvm.js}); blank falls back
+	 *                        to the default engine
+	 */
 	public synchronized static void initScriptConsole(String initEngineName) throws Exception {
 		if (MasterConsole == null) {
 			ConfigProperties consoleVariables = new ConfigProperties();
@@ -90,7 +113,7 @@ public class TomcatScriptConsole {
 			} else if (CommonTools.isBlank(engineName)) {
 				engineName = defaultEngineName;
 			}
-			consoleVariables.putAndReturnSlef("ScriptEngine", engineName);
+			consoleVariables.putAndReturnSelf("ScriptEngine", engineName);
 			MasterConsole = new ScriptConsole();
 			MasterConsole.setUseScriptEnv();
 			MasterConsole.setConsoleVariables(consoleVariables);
@@ -106,6 +129,14 @@ public class TomcatScriptConsole {
 		}
 	}
 
+	/**
+	 * Acquires a console for the current thread (one console per thread, tracked
+	 * by thread id). Grows the pool when {@code poolSize} was raised; throws when
+	 * every console is in use.
+	 *
+	 * @return the console bound to the current thread
+	 * @throws Exception when the pool is exhausted
+	 */
 	private synchronized static ScriptConsole getConsole() throws Exception {
 		int newPoolSoze = getPoolSize();
 		if (newPoolSoze > currentPoolSize) {
@@ -141,12 +172,14 @@ public class TomcatScriptConsole {
 		return CONSOLES_USING_MARK.get(tid);
 	}
 
+	/** Pool usage ratio (0.0 = all idle, 1.0 = all in use). */
 	public synchronized static double usage() {
 		int idleSize = list().size();
 		double usage = (currentPoolSize - idleSize) / (currentPoolSize * 1.0D);
 		return usage;
 	}
 
+	/** Idle console indices, ascending. */
 	private synchronized static List<Integer> list() {
 		List<Integer> list = new ArrayList<Integer>();
 		List<Integer> klist = CONSOLES_POOL.keySet()
@@ -160,6 +193,10 @@ public class TomcatScriptConsole {
 		return list;
 	}
 
+	/**
+	 * Returns the current thread's console to the pool after
+	 * {@code freedDelayMs}; no-op when the thread never held a console.
+	 */
 	public synchronized static void freed() {
 		try {
 			long tid = Thread.currentThread().getId();
@@ -200,79 +237,116 @@ public class TomcatScriptConsole {
 		}
 	}
 
+	/** Puts a value into the current thread's console context. */
 	public static void put(Object params) throws Exception {
 		getConsole().getContext().put(params);
 	}
 
+	/** Clears the current thread's console context. */
 	public static void clear() throws Exception {
 		getConsole().getContext().remove();
 	}
 
+	/** Reads the current thread's console context. */
 	public static Object get() throws Exception {
 		return getConsole().getContext().get();
 	}
 
+	/** Evaluates a script file (content cached for {@link #getCacheSeconds()}). */
 	public static Object eval(File scriptPath) throws Exception {
 		return eval(scriptPath, getCacheSeconds());
 	}
 
+	/** Evaluates a script file by path (content cached). */
 	public static Object eval(String scriptPath) throws Exception {
 		return eval(new File(scriptPath), getCacheSeconds());
 	}
 
+	/** Evaluates a script file by path with an explicit cache lifetime. */
 	public static Object eval(String scriptPath, int cacheLifeSec) throws Exception {
 		return eval(new File(scriptPath), cacheLifeSec);
 	}
 
+	/**
+	 * Evaluates a script file with an explicit cache lifetime: the file content
+	 * is cached under an MD5 key of its absolute path.
+	 */
 	public static Object eval(File scriptPath, int cacheLifeSec) throws Exception {
 		String path = scriptPath.getAbsolutePath();
 		String cacheKey = CommonTools.md5(path);
-		String script = (String) Cache.get(cacheKey);
+		String script = null;
+		// D4 fix (Core 6.1.163): Cache.set treats life==0 as "never expire",
+		// while this project uses 0 = do not cache. Skip the cache entirely
+		// for non-positive lifetimes so a stale hit from an earlier positive
+		// TTL can never happen.
+		if (cacheLifeSec > 0) {
+			script = (String) Cache.get(cacheKey);
+		}
 		if (CommonTools.isBlank(script)) {
 			script = FileTools.text(path);
-			Cache.set(cacheKey, script, cacheLifeSec);
+			if (cacheLifeSec > 0) {
+				Cache.set(cacheKey, script, cacheLifeSec);
+			}
 		}
 		return getConsole().evalScript(script);
 	}
 
+	/** Evaluates a raw script string on the current thread's console. */
 	public static Object evalScript(String script) throws Exception {
 		return getConsole().evalScript(script);
 	}
 
+	/** Cached {@code file.exists()} check (cache lifetime = cacheSeconds). */
 	public static boolean checkExists(File file) {
 		String cacheKey = "Exists_" + CommonTools.md5(file.getAbsolutePath());
-		Boolean exists = (Boolean) Cache.get(cacheKey);
+		Boolean exists = null;
+		// D4 fix (Core 6.1.163): Cache.set treats life==0 as "never expire";
+		// 0 = do not cache in this project, so non-positive lifetimes skip the
+		// cache on both read and write.
+		int cacheLifeSec = getCacheSeconds();
+		if (cacheLifeSec > 0) {
+			exists = (Boolean) Cache.get(cacheKey);
+		}
 		if (exists == null) {
 			exists = file.exists();
-			Cache.set(cacheKey, exists, getCacheSeconds());
+			if (cacheLifeSec > 0) {
+				Cache.set(cacheKey, exists, cacheLifeSec);
+			}
 		}
 		return exists;
 	}
 
+	/** The master console — owns the data source and engine init (singleton). */
 	public static ScriptConsole getMasterConsole() {
 		return MasterConsole;
 	}
 
+	/** Sets the script-file cache lifetime (seconds). */
 	public static void setCacheSeconds(int cacheSeconds) {
 		TomcatScriptConsole.cacheSeconds = cacheSeconds;
 	}
 
+	/** Returns the script-file cache lifetime (seconds). */
 	public static int getCacheSeconds() {
 		return TomcatScriptConsole.cacheSeconds;
 	}
 
+	/** Sets how long a freed console stays out of the pool before return (ms). */
 	public static void setFreedDelayMs(long freedDelayMs){
 		TomcatScriptConsole.freedDelayMs = freedDelayMs;
 	}
 
+	/** Returns the freed-console return delay (ms). */
 	public static long getFreedDelayMs(){
 		return TomcatScriptConsole.freedDelayMs;
 	}	
 
+	/** Sets the maximum console pool size (grows on demand up to this). */
 	public static void setPoolSize(int poolSize) {
 		TomcatScriptConsole.poolSize = poolSize;
 	}
 
+	/** Returns the configured maximum console pool size. */
 	public static int getPoolSize() {
 		return poolSize;
 	}
@@ -284,14 +358,17 @@ public class TomcatScriptConsole {
 		return CONSOLES_POOL.size();
 	}
 
+	/** Sets the script-engine id used to init the master console. */
 	public static void setEngineName(String engineName) {
 		TomcatScriptConsole.engineName = engineName;
 	}
 
+	/** Returns the script-engine id (e.g. {@code graalvm.js}). */
 	public static String getEngineName() {
 		return TomcatScriptConsole.engineName;
 	}
 
+	/** Base folder holding per-domain scripts (JS_PLUS_PATH/domain/). */
 	public static String getAppScriptPath() {
 		return System.getenv("JS_PLUS_PATH") + "/domain/";
 	}
@@ -301,6 +378,15 @@ public class TomcatScriptConsole {
 	// 	return getDomainParams(scriptPath);
 	// }
 
+	/**
+	 * Evaluates a domain script's {@code getParams()} and returns the mapping
+	 * config. The script file is resolved inside the domain folder and the
+	 * console is returned to the pool afterwards.
+	 *
+	 * @param customScriptFile bare script file name (path traversal rejected)
+	 * @return the {@code DomainMapping.getParams()} result, or {@code null}
+	 *         when the file is missing or rejected
+	 */
 	public static Object getDomainParams(String customScriptFile) throws Exception {
 		try {
 			// C8 fix: reject path traversal / absolute paths in scriptFile so a
@@ -325,11 +411,25 @@ public class TomcatScriptConsole {
 		}
 	}	
 
+	/**
+	 * Evaluates a domain script's {@code filter()} response-filter function for
+	 * a domain:port pair. Console is returned to the pool afterwards.
+	 *
+	 * @return the {@code DomainMapping.filter()} result, or {@code null} when
+	 *         the script is missing or rejected
+	 */
 	public static Object getResponseFilter(String domain, String port) throws Exception {
 		String scriptPath = String.format("%s_%s.js", domain, port);
 		return getResponseFilter(scriptPath);
 	}
 
+	/**
+	 * Evaluates a domain script's {@code filter()} response-filter function for
+	 * a custom script file. Console is returned to the pool afterwards.
+	 *
+	 * @return the {@code DomainMapping.filter()} result, or {@code null} when
+	 *         the script is missing or rejected
+	 */
 	public static Object getResponseFilter(String customScriptFile) throws Exception {
 		try {
 			// C8 fix: reject path traversal / absolute paths in scriptFile.

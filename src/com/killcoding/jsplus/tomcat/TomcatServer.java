@@ -27,7 +27,6 @@ import java.io.File;
 import java.sql.Connection;
 import java.sql.Timestamp;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.function.Consumer;
@@ -69,8 +68,20 @@ import org.apache.tomcat.util.net.SSLHostConfig;
 import org.apache.tomcat.util.net.SSLHostConfigCertificate;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import org.apache.catalina.Wrapper;
 
+/**
+ * Embedded Apache Tomcat 11 server lifecycle manager.
+ * <p>
+ * Boots connectors (HTTP/1.1 + HTTP/2, optional SSL per hostname), registers
+ * the gateway filters ({@link DomainProxy}, {@link SecurityFilter},
+ * {@link IpFilter}, {@link IpAttackDefense}) and webapps from the
+ * {@code Webapp.*} config, and exposes the management APIs
+ * (SSL hosts, domain mappings, auth, IP rules) used by the JS console.
+ * <p>
+ * When {@code DomainProxy.enable=true}, the first webapp's context path is
+ * forced to {@code /} (or a temporary empty ROOT webapp is created) so the
+ * proxy filter chain always has a root to dispatch into.
+ */
 public class TomcatServer {
 
 	public final static String VERSION = "${BuildVersion.VERSION}(${BuildVersion.BUILD_DATE})";
@@ -140,20 +151,27 @@ public class TomcatServer {
 
 	protected Boolean proxyEnable = false;
 
+	/** Creates a server instance (no-op wiring; config comes via {@link #loadParams}). */
 	public TomcatServer() throws Exception {
 		super();
 		log = LoggerFactory.getLogger(TomcatServer.class);
 	}
 
+	/** Resets all runtime state so the server can be re-initialized. */
 	private void reset() {
 		webapps = new ArrayList<Map<String, String>>();
 		tmpDir = TOMCAT_HOME;
 		tomcat = null;
 	}
 
+	/**
+	 * Parses the full {@code TomcatServer} configuration block (connectors,
+	 * SSL, webapps, filters, DomainProxy, console pool, ...) into the shared
+	 * {@code config} map.
+	 */
 	public void loadParams(Map params) {
 		ConfigProperties paramsCp = new ConfigProperties();
-		paramsCp.putAllAndReturnSlef(params);
+		paramsCp.putAllAndReturnSelf(params);
 
 		this.proxyEnable = paramsCp.getBoolean("DomainProxy.enable", false);
 		this.encoding = paramsCp.getString("encoding", null);
@@ -277,6 +295,7 @@ public class TomcatServer {
 		}
 	}
 
+	/** Applies the configured keystore/certificate settings onto an SSL host config. */
 	private void loadSSLHost(SSLHostConfig sslHostConfig) {
 		int keystoreFileSize = keystoreFile.size();
 		// B7 fix: guard against config where the three array lengths differ —
@@ -314,6 +333,7 @@ public class TomcatServer {
 		}
 	}
 
+	/** Enables SSL (TLS/HTTPS) on a connector with the configured keystore. */
 	private void useSSL(Connector _connector) {
 		_connector.setSecure(true);
 		_connector.setScheme("https");
@@ -355,6 +375,7 @@ public class TomcatServer {
 		}
 	}
 
+	/** Finds the SSL host config bound to a hostname on a connector. */
 	private SSLHostConfig findSslHostConfigByHostName(Connector _connector, String hostName) {
 		SSLHostConfig[] configs = _connector.findSslHostConfigs();
 		if (configs == null) {
@@ -368,6 +389,7 @@ public class TomcatServer {
 		return null;
 	}
 
+	/** Reloads SSL configuration for one hostname (management API, live apply). */
 	public void reloadSslHostConfig(String hostName) {
 		if (sslConnector != null) {
 			reloadSslHostConfig(sslConnector, hostName);
@@ -377,10 +399,12 @@ public class TomcatServer {
 		}
 	}
 
+	/** Reloads SSL configuration on every connector (all hostnames). */
 	public void reloadSslHostConfig() {
 		reloadSslHostConfig("_default_");
 	}
 
+	/** Reloads the SSL host config for a hostname on one connector. */
 	private void reloadSslHostConfig(Connector _connector, String hostName) {
 		if (findSslHostConfigByHostName(_connector, hostName) == null) {
 			Logger.systemMark(TomcatServer.class, "SSLHostConfig [{}] not found on connector port [{}], skip reload.",
@@ -404,11 +428,13 @@ public class TomcatServer {
 		}
 	}
 
+	/** Applies JVM/Tomcat system attributes from the config to a connector. */
 	private void setAttributes(Connector _Connector) {
 		try {
 			File attsFile = new File(String.format("%s/config/attributes.properties", TOMCAT_HOME));
 			if (attsFile.exists()) {
 				ConfigProperties prop = new ConfigProperties();
+				// Applies every attribute from attributes.properties onto the connector.
 				final Runnable updatedRunnable = new Runnable() {
 					@Override
 					public void run() {
@@ -428,6 +454,7 @@ public class TomcatServer {
 		}
 	}
 
+	/** Reads the {@code tomcat.properties} file into a flat params map (static). */
 	public final static void loadTomcatProps(final Map<String, String> params) {
 		try {
 			if (CommonTools.isBlank(TOMCAT_HOME))
@@ -447,6 +474,7 @@ public class TomcatServer {
 			File tomcatConfigFile = new File(String.format("%s/config/tomcat.properties", TOMCAT_HOME));
 			if (tomcatConfigFile.exists()) {
 				ConfigProperties cp = new ConfigProperties();
+				// Copies every tomcat.properties entry into the startup params map.
 				final Runnable updateTomcatPropRun = new Runnable() {
 					@Override
 					public void run() {
@@ -478,10 +506,12 @@ public class TomcatServer {
 		}
 	}
 
+	/** Returns the resolved TOMCAT_HOME folder path. */
 	public String getTomcatHome() {
 		return TOMCAT_HOME;
 	}
 
+	/** Returns the live embedded Tomcat instance (null before start). */
 	public Tomcat getTomcat() {
 		return tomcat;
 	}
@@ -495,10 +525,12 @@ public class TomcatServer {
 	 *  old code leaked a new single-thread pool on every call. */
 	private volatile ExecutorService lifecycleExecutor;
 
+	/** Resolves the keystore-password encryption key from config/environment. */
 	private static String sslEncryptKeyConfig() {
 		return staticConfig != null ? staticConfig.getString("SSL.keystoreEncryptKey", null) : null;
 	}
 
+	/** Daemon executor for async lifecycle work (start/stop/reload). */
 	private ExecutorService lifecycleExecutor() {
 		ExecutorService e = lifecycleExecutor;
 		if (e == null || e.isShutdown()) {
@@ -518,8 +550,10 @@ public class TomcatServer {
 		return e;
 	}
 
+	/** Starts the server asynchronously (entry point for the JS console). */
 	public void start(Map<String, String> params) {
 		ExecutorService exec = lifecycleExecutor();
+		// Runs the full synchronous start on the shared lifecycle executor.
 		exec.execute(new Runnable() {
 			@Override
 			public void run() {
@@ -528,6 +562,7 @@ public class TomcatServer {
 		});
 	}
 
+	/** Sets the shared base attributes on every connector. */
 	private void setBaseAttributes() {
 		if (!CommonTools.isBlank(encoding)) {
 			applyToConnectors(c -> {
@@ -590,10 +625,7 @@ public class TomcatServer {
 		applyToConnectors(c -> setAttribute(c, "disableUploadTimeout", disableUploadTimeout));
 	}
 
-	/**
-	 * Apply the same connector tuning to the HTTP connector and, when present, the
-	 * SSL connector.
-	 */
+	/** Runs an action against every active connector. */
 	private void applyToConnectors(Consumer<Connector> action) {
 		action.accept(connector);
 		if (sslConnector != null) {
@@ -601,6 +633,7 @@ public class TomcatServer {
 		}
 	}
 
+	/** Synchronous start: builds the Tomcat instance, connectors, webapps and console. */
 	private void startRun(Map<String, String> params) {
 		try {
 			reset();
@@ -624,6 +657,7 @@ public class TomcatServer {
 		}
 	}
 
+	/** Builds the embedded Tomcat instance with its server and service. */
 	private void initTomcat() {
 		tomcat = new Tomcat();
 		tomcat.setPort(port);
@@ -663,6 +697,7 @@ public class TomcatServer {
 		}
 	}
 
+	/** Enables the HTTP/2 upgrade protocol on a connector. */
 	private void useHttp2(Connector c) {
 		Http2Protocol http2 = new Http2Protocol();
 		if (http2MaxConcurrentStreams != null) {
@@ -672,6 +707,7 @@ public class TomcatServer {
 		log.info("HTTP/2 enabled on connector port {} (h2 over TLS / h2c upgrade).", c.getPort());
 	}
 
+	/** Adds the configured connectors (HTTP + HTTPS) to the service. */
 	private void addServiceConnectors() {
 		tomcat.getService().addConnector(connector);
 
@@ -686,6 +722,12 @@ public class TomcatServer {
 		server.addLifecycleListener(listener);
 	}
 
+	/**
+	 * Adds webapps from the {@code Webapp.*} config. When
+	 * {@code DomainProxy.enable=true}, the first context is forced to
+	 * {@code /} (a temporary empty ROOT webapp is created when none is
+	 * configured) so the proxy filter chain has a root to dispatch into.
+	 */
 	private void addWebapps() {
 		// DomainProxy.enable=true: any webapp configured with contextPath "/"
 		// (e.g. Webapp.contextPath[0]=/) is ignored — the server creates its own
@@ -720,6 +762,7 @@ public class TomcatServer {
 		}
 	}
 
+	/** Registers one webapp context at a context path backed by an appBase folder. */
 	private void addWebappContext(String contextPath, String appBase) {
 		Context context = tomcat.addWebapp(contextPath, appBase);
 		context.setReloadable(reloadable);
@@ -740,6 +783,7 @@ public class TomcatServer {
 	// Fresh empty directory under java.io.tmpdir (never touches the user's
 	// webapps folder) used only when DomainProxy is enabled with no webapp
 	// configured; reuse a fixed name so repeated restarts don't accumulate.
+	/** Creates a temporary empty ROOT webapp base (used when no Webapp is configured). */
 	private String createTemporaryRootAppBase() {
 		String tmp = System.getProperty("java.io.tmpdir");
 		String base = tmp + File.separator + "jsplus-tomcat-tmp-root";
@@ -750,6 +794,7 @@ public class TomcatServer {
 		return dir.getAbsolutePath();
 	}
 
+	/** Mounts the JsPlus jar resources (WEB-INF/lib) into a webapp's resource root. */
 	private void addJarResources(WebResourceRoot resources) {
 		if (jarResourcePath == null) {
 			return;
@@ -777,6 +822,7 @@ public class TomcatServer {
 		}
 	}
 
+	/** Mounts the compiled classes folder into a webapp's resource root. */
 	private void addClassesResources(WebResourceRoot resources) {
 		if (classesPath == null) {
 			return;
@@ -787,6 +833,7 @@ public class TomcatServer {
 		}
 	}
 
+	/** Mounts a configured extra resource directory into a webapp's resource root. */
 	private void addWebResourceMount(WebResourceRoot resources) {
 		if (webResourcePath == null || webResourceMount == null) {
 			return;
@@ -797,6 +844,7 @@ public class TomcatServer {
 		}
 	}
 
+	/** Initializes the script console pool (once) before the server starts. */
 	private synchronized void initConsole() {
 		if (!GlobalScriptConsole.isLoadedScriptEngine()) {
 			try {
@@ -807,10 +855,12 @@ public class TomcatServer {
 		}
 	}
 
+	/** Sets a string property on a connector via its attribute API. */
 	private void setAttribute(Connector ctor, String name, Object value) {
 		ctor.setProperty(name, value + "");
 	}
 
+	/** Registers the gateway filters on every webapp context. */
 	private void addFilter(Context context) {
 		IpAttackDefense ipAttackDefense = new IpAttackDefense();
 		FilterDef ipAttackDefenseDef = new FilterDef();
@@ -875,10 +925,12 @@ public class TomcatServer {
 
 	}
 
+	/** Stops the server asynchronously. */
 	public void stop() {
 		stop(null);
 	}
 
+	/** Stops the server synchronously, invoking a callback afterwards. */
 	protected void stop(Runnable callback) {
 		if (tomcat == null) {
 			log.warn("Tomcat is not running.");
@@ -889,6 +941,7 @@ public class TomcatServer {
 		}
 
 		ExecutorService exec = lifecycleExecutor();
+		// Runs the synchronous shutdown on the shared lifecycle executor.
 		exec.execute(new Runnable() {
 			@Override
 			public void run() {
@@ -939,6 +992,7 @@ public class TomcatServer {
 		});
 	}
 
+	/** Current JVM memory usage snapshot (used/test reports). */
 	public static Map<String, Long> getMemoryInfo() {
 		Map<String, Long> info = new HashMap<String, Long>();
 		Runtime instance = Runtime.getRuntime();
@@ -953,6 +1007,7 @@ public class TomcatServer {
 		return info;
 	}
 
+	/** Pre-loads the domain mappings from the DB into the proxy cache. */
 	private void loadDomainMapping() {
 		CacheDriverExecutor cde = null;
 		String sql = "SELECT * FROM domain_mapping_param WHERE deleted = :deleted ORDER BY created_at ASC";
@@ -985,6 +1040,10 @@ public class TomcatServer {
 		}
 	}
 
+	/**
+	 * Loads all {@code domain_ssl_host} rows into live SSL host configs
+	 * (management API result: {@code code/msg/data}).
+	 */
 	public Map<String, Object> loadDomainSslHosts() {
 		Map<String, Object> resMap = new HashMap<>();
 		CacheDriverExecutor cde = null;
@@ -1170,6 +1229,7 @@ public class TomcatServer {
 		}
 	}
 
+	/** Management API: removes a domain SSL host by hostname (soft delete). */
 	public synchronized static Map<String, Object> removeDomainSslHost(String hostname) {
 		Map<String, Object> resMap = new HashMap<String, Object>();
 		if (CommonTools.isBlank(hostname)) {
@@ -1209,6 +1269,7 @@ public class TomcatServer {
 		}
 	}
 
+	/** Management API: reads one domain SSL host. */
 	public static Map<String, Object> queryDomainSslHost(String hostname) {
 		Map<String, Object> resMap = new HashMap<String, Object>();
 		String msg = "";
@@ -1245,6 +1306,7 @@ public class TomcatServer {
 		}
 	}
 
+	/** Management API: lists every domain SSL host. */
 	public static Map<String, Object> queryDomainSslHosts() {
 		Map<String, Object> resMap = new HashMap<String, Object>();
 		String msg = "";
@@ -1272,6 +1334,7 @@ public class TomcatServer {
 		}
 	}
 
+	/** Loads one domain SSL host row from the DB. */
 	private static Map<String, Object> getDomainSslHost(String hostname) throws Exception {
 		CacheDriverExecutor cde = null;
 		String sql = "SELECT * FROM domain_ssl_host WHERE hostname = :hostname AND deleted = :deleted";
@@ -1287,6 +1350,7 @@ public class TomcatServer {
 		}
 	}
 
+	/** Loads all domain SSL host rows from the DB. */
 	private static List<Map<String, Object>> getDomainSslHosts() throws Exception {
 		CacheDriverExecutor cde = null;
 		String sql = "SELECT * FROM domain_ssl_host WHERE deleted = :deleted ORDER BY created_at ASC";
@@ -1305,7 +1369,7 @@ public class TomcatServer {
 	// keystorePass encryption (per-row AES key, following the DomainAuth pattern)
 	// ------------------------------------------------------------------
 
-	/** Encrypts a plaintext keystore password with the given per-row AES key. */
+	/** Encrypts a keystore password for storage. */
 	private static String encryptKeystorePass(String encryptKey, String plain) {
 		try {
 			byte[] encrypted = CipherTools.AESEncrypt(encryptKey, plain.getBytes(BaseFile.CHARSET));
@@ -1317,11 +1381,7 @@ public class TomcatServer {
 		}
 	}
 
-	/**
-	 * Decrypts a stored keystore password with the row's AES key.
-	 * Legacy rows written before encryption (no encrypt_key) are returned
-	 * unchanged.
-	 */
+	/** Decrypts a stored keystore password. */
 	private static String decryptKeystorePass(String encryptKey, String stored) {
 		if (CommonTools.isBlank(encryptKey) || CommonTools.isBlank(stored)) {
 			return stored; // legacy plaintext row

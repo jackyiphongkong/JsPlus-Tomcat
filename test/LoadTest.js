@@ -20,8 +20,9 @@
 // would deadlock on those). Retries are synchronous sendAsync + get().
 //
 // Outputs (identical to the Java version):
-//   ../test_reports/loadtest-result.json
-//   ../test_reports/loadtest-dashboard.html
+//   ../docs/latest/report/loadtest-result.json
+//   ../docs/latest/report/loadtest-dashboard.html
+//   (plus a legacy copy under ../test_reports/)
 // ============================================================================
 
 // Self-signed test certificate:
@@ -294,34 +295,50 @@ function main() {
         success, failed, round1(qps), Math.round(avg), Math.round(p50), Math.round(p90),
         Math.round(p95), Math.round(p99), Math.round(max), statusCount, perSec, hist, errors);
 
-    // --- write outputs into test_reports/ ---
+    // --- write outputs into docs/latest/report/ (the JsPlus-Core docs layout)
+    //     and mirror them into the legacy test_reports/ folder ---
     var Files2 = Java.type("java.nio.file.Files");
     var Paths2 = Java.type("java.nio.file.Paths");
     var StandardCharsets2 = Java.type("java.nio.charset.StandardCharsets");
-    var reportCandidates = [];
-    if (jppBase !== "") {
-        reportCandidates.push(jppBase + "/../../test_reports/");
-        reportCandidates.push(jppBase + "/../../../test_reports/");
-    }
-    reportCandidates.push("../test_reports/");
-    reportCandidates.push("test_reports/");
-    var reportDir = null;
-    for (var i = 0; i < reportCandidates.length; i++) {
-        var rf = new File(reportCandidates[i]);
-        try {
-            if (rf.exists()) { reportDir = rf.getCanonicalPath().replace("\\", "/") + "/"; break; }
-        } catch (e) {}
-    }
-    if (reportDir === null) {
-        var mk = new File(reportCandidates[0]);
+    // Resolve the first existing candidate directory; create the first
+    // candidate when none exists yet. Returns a forward-slash path with a
+    // trailing slash so the joins below are platform-neutral.
+    var resolveReportDir = function (candidates) {
+        for (var c = 0; c < candidates.length; c++) {
+            var rf = new File(candidates[c]);
+            try {
+                if (rf.exists()) { return rf.getCanonicalPath().replace("\\", "/") + "/"; }
+            } catch (e) {}
+        }
+        var mk = new File(candidates[0]);
         try { mk.mkdirs(); } catch (e) {}
-        reportDir = mk.getCanonicalPath().replace("\\", "/") + "/";
+        try { return mk.getCanonicalPath().replace("\\", "/") + "/"; } catch (e) { return candidates[0]; }
+    };
+    var primaryDir = resolveReportDir([
+        (jppBase !== "" ? jppBase + "/../../docs/latest/report/" : "../docs/latest/report/"),
+        (jppBase !== "" ? jppBase + "/../../../docs/latest/report/" : "docs/latest/report/"),
+        "../docs/latest/report/",
+        "docs/latest/report/"
+    ]);
+    var legacyDir = resolveReportDir([
+        (jppBase !== "" ? jppBase + "/../../test_reports/" : "../test_reports/"),
+        (jppBase !== "" ? jppBase + "/../../../test_reports/" : "test_reports/"),
+        "../test_reports/",
+        "test_reports/"
+    ]);
+    print("LoadTest reportDir=" + primaryDir);
+    Files2.writeString(Paths2.get(primaryDir + "loadtest-result.json"), json, StandardCharsets2.UTF_8);
+    print("JSON written to " + primaryDir + "loadtest-result.json");
+    Files2.writeString(Paths2.get(primaryDir + "loadtest-dashboard.html"), html, StandardCharsets2.UTF_8);
+    print("Dashboard written to " + primaryDir + "loadtest-dashboard.html");
+    try {
+        if (legacyDir !== primaryDir) {
+            Files2.writeString(Paths2.get(legacyDir + "loadtest-result.json"), json, StandardCharsets2.UTF_8);
+            Files2.writeString(Paths2.get(legacyDir + "loadtest-dashboard.html"), html, StandardCharsets2.UTF_8);
+        }
+    } catch (e) {
+        print("[WARN] Could not write legacy loadtest copy: " + e);
     }
-    print("LoadTest reportDir=" + reportDir);
-    Files2.writeString(Paths2.get(reportDir + "loadtest-result.json"), json, StandardCharsets2.UTF_8);
-    print("JSON written to " + reportDir + "loadtest-result.json");
-    Files2.writeString(Paths2.get(reportDir + "loadtest-dashboard.html"), html, StandardCharsets2.UTF_8);
-    print("Dashboard written to " + reportDir + "loadtest-dashboard.html");
     print("Result: success=" + success + " failed=" + failed
           + " qps=" + round1(qps) + " avg=" + Math.round(avg)
           + "ms p50=" + Math.round(p50) + "ms p90=" + Math.round(p90)

@@ -62,18 +62,24 @@
 	     for 999 first and carry directly. ant 1.9's propertyfile task has no
 	     "if" attribute, so the bump is split into mutually exclusive targets
 	     using target-level if/unless. -->
+	<!-- NOTE: ant properties are immutable once set, so this target loads
+	     the PRE-bump values under the jr.old.* names only (they drive the
+	     bump arithmetic and the 999 carry checks). version-final is the
+	     single place that loads the file WITHOUT a prefix, i.e. the real
+	     post-bump values, so ${jr.version} (changelog header + jar name)
+	     always matches version.properties. -->
 	<target name="version-flags" depends="version-init">
-		<loadproperties srcFile="${jr.root}/version.properties" />
+		<loadproperties srcFile="${jr.root}/version.properties" prefix="jr.old." />
 		<condition property="jr.patch.max">
-			<matches string="${jr.patch}" pattern="999" />
+			<matches string="${jr.old.jr.patch}" pattern="999" />
 		</condition>
 		<condition property="jr.minor.max">
-			<matches string="${jr.minor}" pattern="999" />
+			<matches string="${jr.old.jr.minor}" pattern="999" />
 		</condition>
 		<condition property="jr.carry.major">
 			<and>
-				<matches string="${jr.patch}" pattern="999" />
-				<matches string="${jr.minor}" pattern="999" />
+				<matches string="${jr.old.jr.patch}" pattern="999" />
+				<matches string="${jr.old.jr.minor}" pattern="999" />
 			</and>
 		</condition>
 	</target>
@@ -81,7 +87,7 @@
 	<!-- case A: patch < 999 -> patch +1 -->
 	<target name="bump-case-a" depends="version-flags" unless="jr.patch.max">
 		<propertyfile file="${jr.root}/version.properties">
-			<entry key="jr.patch" type="int" default="${jr.patch}" operation="+" />
+			<entry key="jr.patch" type="int" default="${jr.old.jr.patch}" operation="+" />
 		</propertyfile>
 	</target>
 
@@ -89,7 +95,7 @@
 	<target name="bump-case-b" depends="version-flags" if="jr.patch.max" unless="jr.carry.major">
 		<propertyfile file="${jr.root}/version.properties">
 			<entry key="jr.patch" type="int" value="0" />
-			<entry key="jr.minor" type="int" default="${jr.minor}" operation="+" />
+			<entry key="jr.minor" type="int" default="${jr.old.jr.minor}" operation="+" />
 		</propertyfile>
 	</target>
 
@@ -98,7 +104,7 @@
 		<propertyfile file="${jr.root}/version.properties">
 			<entry key="jr.patch" type="int" value="0" />
 			<entry key="jr.minor" type="int" value="0" />
-			<entry key="jr.major" type="int" default="${jr.major}" operation="+" />
+			<entry key="jr.major" type="int" default="${jr.old.jr.major}" operation="+" />
 		</propertyfile>
 	</target>
 
@@ -255,5 +261,41 @@
 		</exec>
 	</target>
 	<target name="diff-check-run" depends="diff-check-win,diff-check-sh" />
-	<target name="build" depends="build-init,package,diff-check-run" />
+
+	<!-- ============================================================
+	     javadoc - same standard as JsPlus-Core: generate the API site
+	     into docs/latest/api, archive it as docs/apis/<version>.jar,
+	     and keep docs/latest/api as the browsable site of the newest
+	     release. -Xdoclint:none keeps the build green even when a
+	     comment is not 100% javadoc-clean. Skip a build with
+	     -Djavadoc.skip=true when only the jar is needed.
+	     ============================================================ -->
+	<target name="javadoc" depends="version-final" unless="javadoc.skip">
+		<delete dir="${jr.root}/docs/latest/api" />
+		<mkdir dir="${jr.root}/docs/latest/api" />
+		<javadoc destdir="${jr.root}/docs/latest/api"
+			sourcepath="${jr.src}"
+			classpathref="classpath"
+			encoding="${jr.charset}"
+			charset="${jr.charset}"
+			docencoding="${jr.charset}"
+			windowtitle="JsPlus-Tomcat ${jr.version} API"
+			use="true"
+			linksource="true"
+			failonerror="true">
+			<arg value="-Xdoclint:none"/>
+			<doctitle><![CDATA[<h1>JsPlus-Tomcat ${jr.version}</h1>]]></doctitle>
+			<bottom><![CDATA[<i>JsPlus-Tomcat ${jr.version} - KILLCODING.COM - MIT License</i>]]></bottom>
+		</javadoc>
+		<!-- Archive the generated API site as docs/apis/<version>.jar
+		     (one jar per release); docs/latest/api stays as the browsable
+		     site of the newest version. -->
+		<mkdir dir="${jr.root}/docs/apis" />
+		<jar jarfile="${jr.root}/docs/apis/${jr.version}.jar">
+			<fileset dir="${jr.root}/docs/latest/api" />
+		</jar>
+		<echo message="Generated docs/apis/${jr.version}.jar + docs/latest/api (JsPlus-Tomcat ${jr.version})" />
+	</target>
+
+	<target name="build" depends="build-init,package,diff-check-run,javadoc" />
 </project>

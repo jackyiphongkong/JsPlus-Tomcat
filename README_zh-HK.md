@@ -172,7 +172,11 @@ JsPlus-Tomcat/
 │   ├── ghost/                  # ghost 輔助腳本 (H2Ghost、TomcatGhost)
 ├── LibHome/                    # 依賴 JAR (tomcat、h2、graalvm、nashorn、jsplus …)
 ├── dbscript/                   # change.sql / fallback.sql (H2 schema)
-├── build.xml                   # Ant 建置 → LibHome/jsplus/default/jsplus-tomcat.jar
+├── test/                       # TestAll.bat/.sh + 八個 JS 測試套件 + LoadTest.js
+├── docs/                       # latest/api、apis/<ver>.jar、latest/report、reports/<ver>.jar
+├── version.properties          # 建置版本（jr.major/minor/patch）
+├── changes.log / changes_zh-HK.log  # 建置歷史（英／繁）
+├── build.xml                   # Ant 建置 → LibHome/jsplus/default/jsplus-tomcat-<version>.jar
 ├── ant.bat                     # Windows Ant 包裝腳本
 └── ant.sh                      # Linux/macOS Ant 包裝腳本
 ```
@@ -183,7 +187,7 @@ JsPlus-Tomcat/
 
 - **Java** — 位於 `../Java/default/` 的 JDK（例如 GraalVM JDK 25），或可透過
   `JAVA_HOME`／PATH 取得的任何 JDK（啟動腳本會自動回退）。
-- **Apache Ant** — 僅在需要重新建置 `jsplus-tomcat.jar` 時使用（執行時不需要）；內附於
+- **Apache Ant** — 僅在需要重新建置 `jsplus-tomcat-<version>.jar` 時使用（執行時不需要）；內附於
   `ant/default/`，缺失時回退至系統 `ANT_HOME`／PATH。
 - **H2** — 內附於 `LibHome/h2/default/`。
 
@@ -194,8 +198,10 @@ JsPlus-Tomcat/
 編譯 `src/` 並將 `com/**` 與 `org/**` 打包成：
 
 ```
-LibHome/jsplus/default/jsplus-tomcat.jar
+LibHome/jsplus/default/jsplus-tomcat-<version>.jar
 ```
+
+檔名帶建置版本（取自 `version.properties`，每次建置 patch +1），發佈版本之間不會互相覆蓋。
 
 ```sh
 # Linux / macOS
@@ -218,6 +224,21 @@ v<版本>  <建置時間>  <備註>
 
 傳入 `-Dchange.note="..."`（例如 `ant -Dchange.note="add auth lockout"`）即可在該行記錄簡短說明。
 標頭僅在首次建置時寫入。
+
+`build` 每次亦會重新生成 API 文件：
+
+- javadoc 站點寫入 **`docs/latest/api/`**（`windowtitle` 帶版本號、`-Xdoclint:none`、附原始碼連結），
+  並歸檔為 **`docs/apis/<version>.jar`**（一版本一 jar）；
+- 可用 `-Djavadoc.skip=true` 略過此步驟（適合只需快速編譯的循環）。
+
+`docs/` 目錄結構與 JsPlus-Core 一致：
+
+| 路徑 | 內容 |
+|---|---|
+| `docs/latest/api/` | 最新版本的 API javadoc 站點——開啟 `docs/latest/api/index.html` |
+| `docs/apis/<version>.jar` | 每個發佈版本的 API javadoc 歸檔 jar（一版本一 jar） |
+| `docs/latest/report/` | 最新一次執行的測試報告——每次 `TestAll.bat` / `TestAll.sh` 直接寫入；開啟 `docs/latest/report/TestAll-Report.html` |
+| `docs/reports/<version>.jar` | 每次執行的測試報告歸檔 jar（一版本一 jar） |
 
 每次建置後會將 `src/` 的 Java 原始碼（唯讀）與 Git 鏡像 `D:/Githubrepos/JsPlus-Tomcat/src`
 進行差異比對。若發現差異，會向 `changes.log` 及 `changes_zh-HK.log` 各附加一筆臨時記錄：
@@ -727,21 +748,25 @@ shell/bat 啟動器會將命令列選項傳遞至 JsPlus 主類別（`com.killco
 
 ### 自動化測試腳本（主控台模式）
 
-五套可執行的測試套件位於 `test/`（存放庫根目錄），
+八套可執行的測試套件位於 `test/`（存放庫根目錄），
 於執行中的 JsPlus 主控台內執行——無需第三方測試框架，亦無需啟動器腳本：
 
 | 腳本 | 涵蓋範圍 |
 |---|---|
-| `TestBase.js` | 共用測試基礎（Java 繫結、`check`／`isOk`／`msg`、`callTomcat`、`runCmd`／`curlStatus`、`dbVerify` SQL 驗證、HTML／MD／CI 摘要報告寫入） |
-| `TestAll.js` | 統一入口——依序執行五套測試套件，並輸出總計通過／失敗摘要 |
+| `TestBase.js` | 共用測試基礎（Java 繫結、`check`／`isOk`／`msg`、`callTomcat`、`runCmd`／`curlStatus`、`dbVerify` SQL 驗證、HTML／MD／CI 摘要報告寫入；報告同步寫入 `docs/latest/report/` 及舊路徑 `test_reports/`） |
+| `TestAll.js` | 統一入口——依序執行全部八套測試，並輸出總計通過／失敗摘要 |
 | `TestDomainProxy.js` | 21 個案例——網域對應 CRUD ＋ 透過 `curl` 進行即時反向代理請求驗證（含 `mode=internal` 分派及組合驗證） |
 | `TestSecurityFilter.js` | 16 個案例——Basic Auth CRUD（`domain_auth`／`domain_auth_user`）＋ 透過 `curl` 進行即時 `401`／`200` 驗證 |
 | `TestIpFilter.js` | 20 個案例——網域 IP 規則 CRUD（`domain_ip_rule`，ALLOW／DENY，含 `uri` 前綴及 ALLOW 優先於 DENY）＋ 透過 `curl` 進行即時 `403`／`200` 驗證 |
 | `TestIpAttackDefense.js` | 16 個案例——防禦規則 CRUD（`ip_defense_rule`／`ip_ban`／`ip_request_log`）＋ 即時自動封禁（`403`）流程驗證 |
-| `TestTomcatServer.js` | 34 個案例——經 `tomcat` 主控台入口（`TomcatEmbed.js`）執行 TomcatServer 行為測試：`addSslHost`＋清理、`Webapp.contextPath`／`Webapp.appBase` 組態契約（含舊鍵回歸防護）、`SSL.*` 區塊、keystore 就緒狀態（JKS＋alias＋信任錨）、唯讀行為冒煙測試（`getTomcat`／`queryDomainSslHosts`／`loadDomainSslHosts`）、DomainSslHost CRUD 及 HTTP/2 契約（`Http2.enable=true` 組態＋純文字連接埠即時 h2c 握手）——每次 API 呼叫均記錄 `{code, msg}` 返回值，DB 寫入附 `dbVerify`（`SELECT *`）驗證＋清理 |
+| `TestTomcatServer.js` | 36 個案例——經 `tomcat` 主控台入口（`TomcatEmbed.js`）執行 TomcatServer 行為測試：`addSslHost`＋清理、`Webapp.contextPath`／`Webapp.appBase` 組態契約（含舊鍵回歸防護）、`SSL.*` 區塊、keystore 就緒狀態（JKS＋alias＋信任錨）、唯讀行為冒煙測試（`getTomcat`／`queryDomainSslHosts`／`loadDomainSslHosts`）、DomainSslHost CRUD 及 HTTP/2 契約（`Http2.enable=true` 組態＋純文字連接埠即時 h2c 握手）——每次 API 呼叫均記錄 `{code, msg}` 返回值，DB 寫入附 `dbVerify`（`SELECT *`）驗證＋清理 |
+| `TestAuthLockout.js` | 7 個案例——連續 N 次錯誤密碼後鎖定帳號（`failed_attempts`／`locked_until`）、鎖定中拒絕登入、解鎖 API、解鎖後計數器接續（即時 `401` 檢查＋`dbVerify`） |
+| `TestFreed.js` | 6 個案例——共用基礎設施冒煙檢查，確保安全／IP 改動後仍運作正常 |
+| `TestServerLog.js` | 11 個案例——非同步 Web 日誌管線（`ServerLog`）：寫入路徑、CSV 記錄格式、批次／刷寫行為及按網域日誌隔離 |
 
 執行全部測試的一鍵流程（停止服務 → DB 初始化 → H2 → 內嵌 Tomcat →
-108 項檢查 → 對獨立 Tomcat 進行壓力測試 → `test_reports/`）：
+**134 項檢查** → 對獨立 Tomcat 進行壓力測試 →
+`docs/latest/report/` ＋ `docs/reports/<version>.jar`）：
 
 - Windows：`test\TestAll.bat`
 - Linux：`test/TestAll.sh`
@@ -767,14 +792,20 @@ Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestIpAttackDefense.js');
 /
 Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestTomcatServer.js');
 /
+Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestAuthLockout.js');
+/
+Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestFreed.js');
+/
+Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestServerLog.js');
+/
 ```
 
 前置條件（僅 JS 主控台執行需要；`TestAll.bat`／`TestAll.sh` 會自動處理一切）：
 
 - 先啟動服務：`StartH2.bat/sh`，再執行 `StartTomcat.bat/sh`。
 - 執行 SecurityFilter 測試套件前，請於 `JsPlus/config/tomcat.properties` 設定
-  `SecurityFilter.cacheSeconds=0` 並重新啟動 Tomcat——否則預設 60 秒的
-  auth-enable 快取會令即時檢查讀取到過期狀態。
+  `SecurityFilter.cacheSeconds=0` 並重新啟動 Tomcat——本專案中 `0` 代表「不啟用快取」
+  （正數才會開啟 auth-enable 快取），即時檢查因此每次請求都直接讀取資料表狀態。
 - 執行 IpFilter 測試套件前，請於 `JsPlus/config/tomcat.properties` 設定
   `IpFilter.cacheSeconds=0` 並重新啟動 Tomcat——即時 `403`／`200` 檢查
   需無條件讀取規則列表。
@@ -784,20 +815,23 @@ Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestTomcatServer.js');
 
 每項檢查會輸出 `[PASS]`／`[FAIL]`，並將以顏色標示的 HTML 報告
 （PASS 綠色／FAIL 紅色，包含 Case Id／Test Objective／Result／Detail）寫入
-`test_reports/TestDomainProxy-Report.html`、
-`test_reports/TestSecurityFilter-Report.html`、
-`test_reports/TestIpFilter-Report.html`、
-`test_reports/TestIpAttackDefense-Report.html` 及
-`test_reports/TestTomcatServer-Report.html`。
+`docs/latest/report/`——每個套件一對 `Test<Suite>-Report.html`／`.md`，
+另有彙總的 `TestAll-Report.html`／`.md` 及 `TestAll-CI-Summary.md`。
+相同檔案同步鏡像至舊路徑 `test_reports/`，供舊工具使用。
 
 `TestAll.bat`／`TestAll.sh` 的 Step 3 其後會啟動獨立 Tomcat 並執行內建的
 壓力測試（`test/LoadTest.js`，透過 JsPlus 主控台執行的純 JS 移植版，無需
 另行編譯 Java；預設：`https://localhost:8443/default/`、10 並發 × 1000 請求、
 30 秒逾時；可透過 `LOADTEST_URL`／`LOADTEST_CONCURRENCY`／`LOADTEST_TOTAL`／
-`LOADTEST_TIMEOUT` 覆寫），並寫入 `test_reports/loadtest-result.json`（原始及
+`LOADTEST_TIMEOUT` 覆寫），並寫入 `docs/latest/report/loadtest-result.json`（原始及
 摘要指標：QPS、平均、p50/p90/p95/p99、最大值、狀態碼分佈、傳輸層錯誤）及
-離線 HTML 圖表盤 `test_reports/loadtest-dashboard.html`（無 CDN、無
-JavaScript——指標卡片、狀態碼分佈、每秒吞吐 SVG 及延遲直方圖）。壓力測試
+離線 HTML 圖表盤 `docs/latest/report/loadtest-dashboard.html`（無 CDN、無
+JavaScript——指標卡片、狀態碼分佈、每秒吞吐 SVG 及延遲直方圖）。兩個輸出亦會記錄
+該次量測的運行環境——JSON 內為 `environment.before`／`environment.after`，
+儀表板則為 **Runtime Environment** 面板：作業系統／架構、CPU 核數、主機及本
+JVM 的 CPU 負載、實體記憶體總量／可用／使用率、JVM heap 上限／已用、JDK
+版本／供應商／VM、JVM 啟動參數及主機進程數。QPS 只宜與同一環境下的量測互相比較，
+因此環境資訊與數字一併歸檔，而非日後補記。壓力測試
 會先以少量未計入統計的請求暖機，並對短暫的傳輸層錯誤（連線／重設／逾時）
 重試兩次，重試後仍失敗才計入 `failed`。並發採用 `HttpClient.sendAsync`
 批次發送 ＋ `CompletableFuture.allOf().get()`（純 Java 阻塞呼叫——在
@@ -824,9 +858,20 @@ API 使用相同的資料存取路徑）。每個套件結尾均有清理案例�
 
 1. 簽出存放庫（Check out）。
 2. 設定 Oracle GraalVM 25（以 `$JAVA_HOME` 作為後備 Java）。
-3. 安裝 Ant 並建置 `LibHome/jsplus/default/jsplus-tomcat.jar`（`ant build`）。
-4. 執行 `test/TestAll.sh`——與本地完全相同的一鍵流程。
-5. 上傳 `test_reports/` 及 `logs/` 為 `test-reports` 產物（可於 Actions 執行頁面下載）。
+3. 安裝 Ant。
+4. `ant build`——編譯、打包 `LibHome/jsplus/default/jsplus-tomcat-<version>.jar`，
+   並重新生成 API 站點（`docs/latest/api/` ＋ `docs/apis/<version>.jar`）。
+5. 校驗打包的 JAR 與 `version.properties` 一致（防止產物過期或命名錯誤）。
+6. 校驗 javadoc 站點（`docs/latest/api/index.html` 及 `docs/apis/<version>.jar`）。
+7. 執行 `test/TestAll.sh`——與本地完全相同的一鍵流程。
+8. 將 `TestAll-CI-Summary.md` 發佈至該次執行的 Job Summary（`if: always()`）。
+9. 上傳 `test-reports` 產物——`docs/latest/report/`、`docs/reports/`、
+   `docs/latest/api/`、`docs/apis/*.jar`、舊路徑 `test_reports/`、`test/*.log`、
+   `logs/`、`build-verify.log` 及建置出的 JAR（`if: always()`、
+   `if-no-files-found: warn`）。
+
+摘要與產物上傳均以 `if: always()` 執行，即使前置步驟失敗，該次執行仍會發佈
+日誌與部分報告——失敗的執行正是最需要這些檔案的時候。
 
 注意：`Java/`（內嵌 JDK）已加入 `.gitignore`，CI runner 依賴系統 JDK；
 `LibHome/`（全部執行時期 JAR）會提交至存放庫。

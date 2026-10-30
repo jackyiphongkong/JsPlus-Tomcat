@@ -89,11 +89,17 @@ public class IpAttackDefense implements Filter {
 
     private static ConfigProperties config = new ConfigProperties();
 
+    /** Servlet-filter constructor: creates the logger; config comes via {@link #setParams(Map)}. */
     public IpAttackDefense() {
         super();
         log = LoggerFactory.getLogger(IpAttackDefense.class);
     }
 
+    /**
+     * Filter entry point: on the original REQUEST dispatch, records the request
+     * and evaluates defense rules (already-blocked IPs are skipped). Internal
+     * forwards are never double-counted.
+     */
     @Override
     public void doFilter(ServletRequest arg0, ServletResponse arg1, FilterChain chain)
             throws IOException, ServletException {
@@ -129,6 +135,7 @@ public class IpAttackDefense implements Filter {
     // Request recording (batched DB insert via CacheArray)
     // ------------------------------------------------------------------
 
+    /** Queues one request row into the log buffer (async batch insert). */
     private void record(HttpServletRequest request) throws Exception {
         if (requestLogQueue == null) {
             initQueue();
@@ -150,12 +157,15 @@ public class IpAttackDefense implements Filter {
         requestLogQueue.add(item);
     }
 
+    /** Lazily creates the request-log queue with its batch insert filter. */
     private static synchronized void initQueue() {
         if (requestLogQueue != null) {
             return;
         }
         requestLogQueue = new CacheArray();
         long logTimer = config.getLong("IpAttackDefense.logTimer", 1000L);
+        // Batch consumer: persists the request log, expires finished bans and
+        // prunes old log rows on every timer tick.
         requestLogQueue.filter(new CacheArrayFilter(0L, logTimer) {
             @Override
             public void executeBatch(Integer index, List batch) {
@@ -166,6 +176,7 @@ public class IpAttackDefense implements Filter {
         });
     }
 
+    /** Inserts a drained batch into {@code ip_request_log}. */
     private static void insertBatch(List batch) {
         if (batch == null || batch.isEmpty()) {
             return;
@@ -197,11 +208,37 @@ public class IpAttackDefense implements Filter {
      *  used to lose increments and could let an attacker slip past threshold). */
     private static final ConcurrentHashMap<String, Object> DEFENSE_COUNT_LOCKS = new ConcurrentHashMap<>();
 
+    /** D2 fix: cap on the per-key lock map. Attackers rotate source IPs, so the
+     *  lock keys (ruleId + ip) are unbounded by design; once the map grows past
+     *  the threshold it is cleared under its own lock. Clearing only ever
+     *  re-serialises a few concurrent increments (a correctness no-op, since
+     *  the counter is a per-key sliding window), and prevents a slow OOM. */
+    private static final int DEFENSE_COUNT_LOCKS_MAX = 10000;
+
+    /** D2 fix: clears the per-key lock map when it exceeds the size cap. */
+    private static void cleanupDefenseLocks() {
+        if (DEFENSE_COUNT_LOCKS.size() <= DEFENSE_COUNT_LOCKS_MAX) {
+            return;
+        }
+        synchronized (DEFENSE_COUNT_LOCKS) {
+            if (DEFENSE_COUNT_LOCKS.size() > DEFENSE_COUNT_LOCKS_MAX) {
+                DEFENSE_COUNT_LOCKS.clear();
+            }
+        }
+    }
+
+    /**
+     * Evaluates the defense rules against the current request: increments the
+     * sliding-window counter for the client IP and triggers {@link #ban(Map, String, String, String)}
+     * once a rule threshold is reached.
+     */
     private void checkDefense(HttpServletRequest request) throws Exception {
         List<Map<String, Object>> rules = getDefenseRules();
         if (rules == null || rules.isEmpty()) {
             return;
         }
+        // D2 fix: bound the per-IP lock map growth before taking any lock.
+        cleanupDefenseLocks();
         String ip = request.getRemoteAddr();
         String domain = request.getServerName() == null ? "" : request.getServerName().toLowerCase();
         String port = request.getLocalPort() + "";
@@ -224,8 +261,10 @@ public class IpAttackDefense implements Filter {
                     count = count == null ? 1 : count + 1;
                     if (count >= threshold) {
                         ban(rule, ip, domain, port);
-                        // Reset the counter so we do not re-trigger the ban on every request.
-                        Cache.set(countKey, null, windowSeconds);
+                        // D1 fix: Cache.set(key, null, ...) is a no-op, so a
+                        // Cache.remove is required to reset the counter; the ban
+                        // key TTL (not the counter) now guards re-triggering.
+                        Cache.remove(countKey);
                     } else {
                         Cache.set(countKey, count, windowSeconds);
                     }
@@ -236,6 +275,7 @@ public class IpAttackDefense implements Filter {
         }
     }
 
+    /** Whether a rule applies to this domain:port + URI (blank uri = catch-all). */
     private boolean matchRule(Map<String, Object> rule, String domain, String port, String uri) {
         String ruleDomain = String.valueOf(rule.get("domain"));
         String rulePort = String.valueOf(rule.get("port"));
@@ -258,6 +298,11 @@ public class IpAttackDefense implements Filter {
         return true;
     }
 
+    /**
+     * Auto-bans an IP: writes an {@code ip_ban} record, inserts a DENY rule into
+     * {@code domain_ip_rule} (linked to the ban) and caches the ban key so
+     * {@link IpFilter} blocks the IP immediately.
+     */
     private void ban(Map<String, Object> rule, String ip, String domain, String port) {
         try {
             String ruleId = (String) rule.get("id");
@@ -341,6 +386,7 @@ public class IpAttackDefense implements Filter {
         }
     }
 
+    /** Links an auto-ban to its DENY rule ({@code ip_ban_id}) in {@code domain_ip_rule}. */
     private static void updateDomainIpRuleIpBanId(String domain, String port, String ip, String banId) {
         CacheDriverExecutor cde = null;
         try {
@@ -363,6 +409,7 @@ public class IpAttackDefense implements Filter {
         }
     }
 
+    /** Expires finished bans (removes DENY rule + ban cache key) on a periodic check. */
     private static void expireBans() {
         long now = System.currentTimeMillis();
         if (now - lastExpireCheck < EXPIRE_CHECK_MIN_INTERVAL_MS) {
@@ -410,7 +457,7 @@ public class IpAttackDefense implements Filter {
     // ------------------------------------------------------------------
 
     /**
-     * Runs periodically (hourly) on the batch-flush thread:
+     * Runs periodically on the batch-flush thread:
      * <ol>
      * <li>soft-deletes {@code ip_request_log} rows older than
      *     {@code IpAttackDefense.logRetention} (default 7d; 0 disables);</li>
@@ -469,6 +516,7 @@ public class IpAttackDefense implements Filter {
         }
     }
 
+    /** Active defense rules from {@code ip_defense_rule} (cached). */
     private static List<Map<String, Object>> getDefenseRules() throws Exception {
         Integer cacheSeconds = config.getInteger("IpAttackDefense.ruleCacheSeconds", 60);
         Object cached = Cache.get("IpAttackDefense.rules");
@@ -484,22 +532,29 @@ public class IpAttackDefense implements Filter {
             params.put("deleted", false);
             params.put("enabled", true);
             List<Map<String, Object>> list = cde.find(sql, params);
-            Cache.set("IpAttackDefense.rules", list, cacheSeconds);
+            // D3 fix (Core 6.1.163): Cache.set treats life==0 as "never expire",
+            // while the project convention is 0 = do not cache.
+            if (cacheSeconds != null && cacheSeconds > 0) {
+                Cache.set("IpAttackDefense.rules", list, cacheSeconds);
+            }
             return list;
         } finally {
             Db.closeQuietly(cde);
         }
     }
 
+    /** Evicts the cached defense-rule list after a rule write. */
     private static void invalidateRulesCache() {
         try {
-            Integer cacheSeconds = config.getInteger("IpAttackDefense.ruleCacheSeconds", 60);
-            Cache.set("IpAttackDefense.rules", null, cacheSeconds);
+            // D1 fix: Cache.set(key, null, ...) is a no-op; Cache.remove evicts
+            // so the next request re-reads the rules instead of serving stale ones.
+            Cache.remove("IpAttackDefense.rules");
         } catch (Exception e) {
             LoggerFactory.getLogger(IpAttackDefense.class).warn(e.getMessage(), e);
         }
     }
 
+    /** Truncates a string to {@code maxLength} characters (null-safe). */
     private static String limit(String value, int maxLength) {
         if (value == null) {
             return "";
@@ -507,10 +562,12 @@ public class IpAttackDefense implements Filter {
         return value.length() > maxLength ? value.substring(0, maxLength) : value;
     }
 
+    /** Cache key marking an IP as banned (TTL matches the ban duration). */
     private static String bannedIpKey(String ip) {
         return BANNED_IP_CACHE_PREFIX + ip;
     }
 
+    /** Whether the IP is currently banned (cache check, fail-open on error). */
     private static boolean isIpBanned(String ip) {
         return Cache.get(bannedIpKey(ip)) != null;
     }
@@ -640,6 +697,7 @@ public class IpAttackDefense implements Filter {
         }
     }
 
+    /** Removes a defense rule by id (management API). */
     public static Map<String, Object> removeDefenseRule(String ruleId) {
         Map<String, Object> resMap = new HashMap<String, Object>();
         if (CommonTools.isBlank(ruleId)) {
@@ -677,6 +735,7 @@ public class IpAttackDefense implements Filter {
         }
     }
 
+    /** Lists all defense rules (management API). */
     public static Map<String, Object> queryDefenseRules() {
         Map<String, Object> resMap = new HashMap<String, Object>();
         String msg = "";
@@ -714,6 +773,7 @@ public class IpAttackDefense implements Filter {
         }
     }
 
+    /** Lists active IP bans (management API). */
     public static Map<String, Object> queryIpBans() {
         Map<String, Object> resMap = new HashMap<String, Object>();
         String msg = "";
@@ -749,6 +809,7 @@ public class IpAttackDefense implements Filter {
         }
     }
 
+    /** Manually lifts a ban for a domain:port + IP (management API). */
     public static Map<String, Object> removeIpBan(String domain, String port, String ip) {
         Map<String, Object> resMap = new HashMap<String, Object>();
         if (CommonTools.isBlank(domain) || CommonTools.isBlank(port) || CommonTools.isBlank(ip)) {
@@ -795,6 +856,7 @@ public class IpAttackDefense implements Filter {
         }
     }
 
+    /** Queries the {@code ip_request_log} table (management API). */
     public static Map<String, Object> queryIpRequestLogs() {
         Map<String, Object> resMap = new HashMap<String, Object>();
         String msg = "";
@@ -832,6 +894,7 @@ public class IpAttackDefense implements Filter {
         }
     }
 
+    /** Clears all {@code ip_request_log} rows (management API). */
     public static Map<String, Object> clearIpRequestLogs() {
         Map<String, Object> resMap = new HashMap<String, Object>();
         CacheDriverExecutor cde = null;
@@ -853,8 +916,9 @@ public class IpAttackDefense implements Filter {
     }
 
     // Called once during server startup (TomcatServer config load); no concurrent writes.
+    /** Applies the {@code IpAttackDefense} configuration block at startup. */
     public static void setParams(final Map params) {
-        config.putAllAndReturnSlef(params);
+        config.putAllAndReturnSelf(params);
     }
 
 }

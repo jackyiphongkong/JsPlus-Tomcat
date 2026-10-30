@@ -8,8 +8,11 @@
 //   - check({name, ok, detail, objective}), isOk(), msg() helpers
 //   - runCmd() / curlStatus() process helpers for the live curl checks
 //   - dbVerify() — append a follow-up DB query result to the detail line
-//   - writeReport() -> <PROJECT_ROOT>/test_reports/<REPORT_NAME>.html via BaseFile
-//   - writeMd()     -> <PROJECT_ROOT>/test_reports/<REPORT_NAME>.md via BaseFile
+//   - writeReport() -> docs/latest/report/<REPORT_NAME>.html (JsPlus-Core
+//                      docs layout) + a legacy copy under test_reports/
+//   - writeMd()     -> docs/latest/report/<REPORT_NAME>.md + legacy copy
+//   - writeCiSummary() -> docs/latest/report/TestAll-CI-Summary.md + copy
+//   - writeReportFile() — the dual-location writer used by all of the above
 // Loaded by each suite (TestDomainProxy.js / TestSecurityFilter.js / ...):
 //   load(System.getProperty("JS_PLUS_PATH") + "../test/TestBase.js")
 // NOTE: Re-loading this file is harmless (var redeclaration is legal in JS);
@@ -277,6 +280,36 @@ function configSnapshot() {
     return lines;
 }
 
+// Writes one report file into both report locations (JsPlus-Core docs layout):
+//   1) docs/latest/report/ — the standard browsable newest-reports site, and
+//      the source folder that TestAll archives as docs/reports/<version>.jar;
+//   2) test_reports/       — the legacy in-tree location, kept so existing
+//      CI artifact paths and local shortcuts keep working.
+// Returns the primary path written (docs/latest/report/...).
+function writeReportFile(reportName, content) {
+    var File = Java.type("java.io.File");
+    var basePath = System.getProperty("JS_PLUS_PATH");
+    var primaryPath = basePath + "../docs/latest/report/" + reportName;
+    var legacyPath = basePath + "../test_reports/" + reportName;
+    var primaryDir = new File(basePath + "../docs/latest/report");
+    if (!primaryDir.exists()) {
+        primaryDir.mkdirs();
+    }
+    var legacyDir = new File(basePath + "../test_reports");
+    if (!legacyDir.exists()) {
+        legacyDir.mkdirs();
+    }
+    var report = new DiskFile(primaryPath);
+    report.write(content, "UTF-8");
+    try {
+        var legacy = new DiskFile(legacyPath);
+        legacy.write(content, "UTF-8");
+    } catch (e) {
+        print("[WARN] Could not write legacy report copy: " + e);
+    }
+    return primaryPath;
+}
+
 function writeReport() {
     var durationMs = Date.now() - suiteStart;
     var summaryClass = failCount === 0 ? "summary-pass" : "summary-fail";
@@ -388,14 +421,7 @@ function writeReport() {
         // fall back to a generic name so TestBase works standalone too.
         var reportName = (typeof REPORT_NAME !== "undefined" && REPORT_NAME !== null && REPORT_NAME.length > 0)
             ? REPORT_NAME : "TestAll-Report.html";
-        var File = Java.type("java.io.File");
-        var reportDir = new File(System.getProperty("JS_PLUS_PATH") + "../test_reports");
-        if (!reportDir.exists()) {
-            reportDir.mkdirs();
-        }
-        var reportPath = System.getProperty("JS_PLUS_PATH") + "../test_reports/" + reportName;
-        var report = new DiskFile(reportPath);
-        report.write(html, "UTF-8");
+        var reportPath = writeReportFile(reportName, html);
         print("Test report written to " + reportPath);
     } catch (e) {
         print("[WARN] Could not write test report: " + e);
@@ -403,7 +429,8 @@ function writeReport() {
 }
 
 // Markdown test report — mirrors writeReport() but emits a GitHub-friendly
-// Markdown file into <PROJECT_ROOT>/test_reports/<REPORT_NAME>.md via BaseFile.
+// Markdown file into docs/latest/report/<REPORT_NAME>.md (plus a legacy copy
+// under test_reports/ via writeReportFile).
 function writeMd() {
     var durationMs = Date.now() - suiteStart;
     var reportTitle = (typeof REPORT_TITLE !== "undefined" && REPORT_TITLE !== null && REPORT_TITLE.length > 0)
@@ -447,14 +474,7 @@ function writeMd() {
         if (reportName.indexOf(".html") >= 0) {
             reportName = reportName.substring(0, reportName.length - 5) + ".md";
         }
-        var File = Java.type("java.io.File");
-        var reportDir = new File(System.getProperty("JS_PLUS_PATH") + "../test_reports");
-        if (!reportDir.exists()) {
-            reportDir.mkdirs();
-        }
-        var reportPath = System.getProperty("JS_PLUS_PATH") + "../test_reports/" + reportName;
-        var report = new DiskFile(reportPath);
-        report.write(md, "UTF-8");
+        var reportPath = writeReportFile(reportName, md);
         print("Markdown report written to " + reportPath);
     } catch (e) {
         print("[WARN] Could not write markdown report: " + e);
@@ -462,8 +482,10 @@ function writeMd() {
 }
 
 // CI-oriented summary — writes a compact Markdown file into
-// <PROJECT_ROOT>/test_reports/ so the CI job can surface it after a run:
-//   1) it is included in the uploaded test_reports/ artifact (downloadable),
+// docs/latest/report/ (and a legacy copy into test_reports/) so the CI job
+// can surface it after a run:
+//   1) it is included in the uploaded docs/latest/report/ artifact
+//      (downloadable) and archived as docs/reports/<version>.jar,
 //   2) the workflow can append it to $GITHUB_STEP_SUMMARY so the GitHub
 //      Actions run page shows the result without opening the artifact.
 // Params (all optional):
@@ -523,14 +545,7 @@ function writeCiSummary(params) {
     try {
         var reportName = (p.reportName !== undefined && p.reportName !== null && p.reportName.length > 0)
             ? p.reportName : "TestAll-CI-Summary.md";
-        var File = Java.type("java.io.File");
-        var reportDir = new File(System.getProperty("JS_PLUS_PATH") + "../test_reports");
-        if (!reportDir.exists()) {
-            reportDir.mkdirs();
-        }
-        var reportPath = System.getProperty("JS_PLUS_PATH") + "../test_reports/" + reportName;
-        var report = new DiskFile(reportPath);
-        report.write(md, "UTF-8");
+        var reportPath = writeReportFile(reportName, md);
         print("CI summary written to " + reportPath);
     } catch (e) {
         print("[WARN] Could not write CI summary: " + e);

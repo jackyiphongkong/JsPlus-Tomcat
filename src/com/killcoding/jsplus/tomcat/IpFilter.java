@@ -80,10 +80,16 @@ public class IpFilter implements Filter {
 
     private static ConfigProperties config = new ConfigProperties();
 
+    /** Servlet-filter constructor: state is injected later via {@link #setParams(Map)}. */
     public IpFilter() {
         super();
     }
 
+    /**
+     * Servlet entry point: enforces the allow/deny rules for the request's
+     * domain:port + URI against the client IP. Denied requests get a 403 and a
+     * {@code Denied} web-log line; rule/DB errors fail open with a 500.
+     */
     @Override
     public void doFilter(ServletRequest arg0, ServletResponse arg1, FilterChain chain)
             throws IOException, ServletException {
@@ -113,11 +119,18 @@ public class IpFilter implements Filter {
         }
     }
 
+    /** Whether the request IP passes the domain:port rules (catch-all URIs). */
     @SuppressWarnings("unchecked")
     private static boolean isAllowed(String domain, String port, String remoteAddr) throws Exception {
         return isAllowed(domain, port, null, remoteAddr);
     }
 
+    /**
+     * URI-aware allow check: resolves the longest-prefix URI rule group for the
+     * request path, then applies allow-wins-over-deny and whitelist semantics.
+     *
+     * @return {@code true} when the request may proceed
+     */
     @SuppressWarnings("unchecked")
     private static boolean isAllowed(String domain, String port, String requestPath, String remoteAddr)
             throws Exception {
@@ -184,6 +197,10 @@ public class IpFilter implements Filter {
         }
     }
 
+    /**
+     * Loads the domain:port rule group (allow/deny lists + URI-scoped groups)
+     * from the cache, falling back to the DB on cache miss.
+     */
     @SuppressWarnings("unchecked")
     private static Map<String, Object> getDomainIpRuleFromCache(String domain, String port) throws Exception {
         String cacheKey = ipRuleCacheKey(domain, port);
@@ -231,17 +248,25 @@ public class IpFilter implements Filter {
         rules.put("uriRules", uriRules);
         rules.put("uriPrefixes", uriPrefixes);
         Integer cacheSeconds = config.getInteger("IpFilter.cacheSeconds", 30);
-        Cache.set(cacheKey, rows.isEmpty() ? NO_RULE : rules, cacheSeconds);
+        // D3 fix (Core 6.1.163): Cache.set treats life==0 as "never expire",
+        // while the project convention is 0 = do not cache.
+        if (cacheSeconds != null && cacheSeconds > 0) {
+            Cache.set(cacheKey, rows.isEmpty() ? NO_RULE : rules, cacheSeconds);
+        }
         return rows.isEmpty() ? null : rules;
     }
 
+    /** Cache key for a domain:port rule group ({@code iprules:<domain>:<port>}). */
     private static String ipRuleCacheKey(String domain, String port) {
         return String.format("IpFilter.%s:%s.rules", domain == null ? "" : domain.toLowerCase(),
                 port == null ? "" : port.toLowerCase());
     }
 
-    /** Longest-prefix match: picks the uri-scoped rule group for a request path,
-     *  or null when no uri-specific rule matches (caller falls back to catch-all). */
+    /**
+     * Picks the URI rule group whose {@code uri} prefix best matches the request
+     * path (longest-prefix wins); {@code null} means fall back to the catch-all
+     * (blank-uri) rules.
+     */
     @SuppressWarnings("unchecked")
     private static Map<String, Object> findLongestUriRules(Map<String, Object> rules, String requestPath) {
         if (rules == null || requestPath == null || requestPath.isEmpty()) {
@@ -260,8 +285,7 @@ public class IpFilter implements Filter {
         return null;
     }
 
-    /** Normalise a uri for rule scoping: trim; blank or "/" -> "" (catch-all);
-     *  non-blank keeps a single leading "/" and drops any trailing "/". */
+    /** Normalizes a URI for rule matching (null-safe, lowercase path). */
     private static String normalizeUri(String uri) {
         if (uri == null) {
             return "";
@@ -279,7 +303,7 @@ public class IpFilter implements Filter {
         return u;
     }
 
-    /** Display part for a uri: blank -> "", non-blank -> "/api" (idempotent). */
+    /** Human-readable URI for logs (empty URI shows as {@code *}). */
     private static String uriDisplay(String uri) {
         if (uri == null || uri.isEmpty()) {
             return "";
@@ -287,6 +311,7 @@ public class IpFilter implements Filter {
         return uri.startsWith("/") ? uri : "/" + uri;
     }
 
+    /** Whether the IP matches any of the patterns (exact / CIDR / wildcard). */
     private static boolean matchAny(String ip, List<String> patterns) {
         for (String pattern : patterns) {
             if (ipMatches(ip, pattern)) {
@@ -296,6 +321,7 @@ public class IpFilter implements Filter {
         return false;
     }
 
+    /** Matches a single pattern: exact IP, {@code ip/cidr} or wildcard form. */
     private static boolean ipMatches(String ip, String pattern) {
         if (CommonTools.isBlank(ip) || CommonTools.isBlank(pattern)) {
             return false;
@@ -311,6 +337,7 @@ public class IpFilter implements Filter {
         return ip.equalsIgnoreCase(pattern);
     }
 
+    /** Converts a wildcard pattern ({@code 192.168.1.*}) to a regex. */
     private static String wildcardToRegex(String pattern) {
         StringBuilder sb = new StringBuilder("^");
         for (char c : pattern.toCharArray()) {
@@ -325,6 +352,7 @@ public class IpFilter implements Filter {
         return sb.append('$').toString();
     }
 
+    /** Whether the IP lies inside the given {@code ip/prefix} CIDR range. */
     private static boolean cidrMatch(String ip, String cidr) {
         try {
             int idx = cidr.indexOf('/');
@@ -358,6 +386,7 @@ public class IpFilter implements Filter {
     // Management API (called from the JS console via TomcatEmbed.js)
     // ------------------------------------------------------------------
 
+    /** Validates/normalizes a rule type; on failure writes {@code code=1 + msg} into resMap. */
     private static String normalizeRuleType(String ruleType, Map<String, Object> resMap) {
         if (CommonTools.isBlank(ruleType)) {
             resMap.put("code", 0);
@@ -630,6 +659,7 @@ public class IpFilter implements Filter {
         }
     }
 
+    /** Returns all IP rules as a management-API result map ({@code code/msg/data}). */
     public static Map<String, Object> queryDomainIpRules() {
         Map<String, Object> resMap = new HashMap<String, Object>();
         String msg = "";
@@ -661,16 +691,17 @@ public class IpFilter implements Filter {
         }
     }
 
-    /** Drop the cached rules for every configured domain so the next request re-reads the DB. */
+    /** Reloads all IP rules into cache (management API: force refresh). */
     public static Map<String, Object> loadDomainIpRules() {
         Map<String, Object> resMap = new HashMap<String, Object>();
         try {
             List<Map<String, Object>> domains = getDistinctDomains();
-            Integer cacheSeconds = config.getInteger("IpFilter.cacheSeconds", 30);
             for (Map<String, Object> item : domains) {
                 String domain = (String) item.get("domain");
                 String port = (String) item.get("port");
-                Cache.set(ipRuleCacheKey(domain, port), null, cacheSeconds);
+                // D1 fix: Cache.set(key, null, ...) is a no-op (MemoryCache
+                // skips null values), so eviction must use Cache.remove instead.
+                Cache.remove(ipRuleCacheKey(domain, port));
             }
             resMap.put("code", 1);
             resMap.put("msg", String.format("IpFilter cache cleared for %d domain(s).", domains.size()));
@@ -683,10 +714,12 @@ public class IpFilter implements Filter {
         }
     }
 
+    /** Evicts the cached rule group for a domain:port after a write. */
     private static void invalidateCache(String domain, String port) {
         try {
-            Integer cacheSeconds = config.getInteger("IpFilter.cacheSeconds", 30);
-            Cache.set(ipRuleCacheKey(domain, port), null, cacheSeconds);
+            // D1 fix: Cache.set(key, null, ...) is a no-op; use Cache.remove so
+            // the next request re-reads the DB instead of serving stale rules.
+            Cache.remove(ipRuleCacheKey(domain, port));
         } catch (Exception e) {
             LOG.error(e.getMessage(), e);
         }
@@ -787,6 +820,7 @@ public class IpFilter implements Filter {
         }
     }
 
+    /** Active (non-deleted) rules for a domain:port from the {@code domain_ip_rule} table. */
     private static List<Map<String, Object>> getDomainIpRules(String domain, String port) throws Exception {
         CacheDriverExecutor cde = null;
         String sql = "SELECT * FROM domain_ip_rule WHERE domain = :domain AND port = :port AND deleted = :deleted ORDER BY created_at ASC";
@@ -803,6 +837,7 @@ public class IpFilter implements Filter {
         }
     }
 
+    /** All active rules across every domain (management API). */
     private static List<Map<String, Object>> getDomainIpRules() throws Exception {
         CacheDriverExecutor cde = null;
         String sql = "SELECT * FROM domain_ip_rule WHERE deleted = :deleted ORDER BY created_at ASC";
@@ -817,6 +852,7 @@ public class IpFilter implements Filter {
         }
     }
 
+    /** Distinct non-deleted domains present in the rule table. */
     private static List<Map<String, Object>> getDistinctDomains() throws Exception {
         CacheDriverExecutor cde = null;
         String sql = "SELECT DISTINCT domain, port FROM domain_ip_rule WHERE deleted = :deleted";
@@ -831,6 +867,7 @@ public class IpFilter implements Filter {
         }
     }
 
+    /** Sends an HTTP error page without exposing stack traces to the client. */
     private void safeSendError(HttpServletResponse response, int code, String msg) throws IOException {
         if (!response.isCommitted()) {
             boolean errorRedirectEnable = config.getBoolean("errorRedirectEnable", false);
@@ -856,8 +893,9 @@ public class IpFilter implements Filter {
     }
 
     // Called once during server startup (TomcatServer config load); no concurrent writes.
+    /** Applies the {@code IpFilter} configuration block at startup. */
     public static void setParams(final Map params) {
-        config.putAllAndReturnSlef(params);
+        config.putAllAndReturnSelf(params);
     }
 
 }

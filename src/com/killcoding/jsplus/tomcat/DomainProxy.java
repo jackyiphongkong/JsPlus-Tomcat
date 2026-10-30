@@ -47,7 +47,6 @@ import java.net.http.HttpResponse;
 import java.sql.Connection;
 import java.sql.Timestamp;
 import java.time.Duration;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
@@ -66,6 +65,18 @@ import com.killcoding.datasource.Clock;
 import com.killcoding.ext.Json;
 import com.killcoding.tool.CommonTools;
 
+/**
+ * Reverse-proxy gateway filter: maps {@code domain:port(/uri-prefix)} to a
+ * target URL (see {@code domain_mapping_param}), forwards the request and
+ * relays the response.
+ * <p>
+ * Supported modes: {@code forward} (HTTP relay), {@code redirect}
+ * (302 to the target) and {@code internal} (server-side dispatch into a local
+ * webapp via RequestDispatcher). A domain script may transform the request
+ * context ({@code getParams}) and the response ({@code filter}) when
+ * {@code scriptEnable} is set. URI-scoped mappings ({@code uri} column)
+ * take precedence over the blank-uri catch-all mapping.
+ */
 public class DomainProxy implements Filter {
 
 	private Logger log = null;
@@ -123,16 +134,17 @@ public class DomainProxy implements Filter {
 		return u;
 	}
 
+	/** Cache key for the blank-uri (catch-all) mapping of a domain:port. */
 	private static String domainPortKey(String domain, String port) {
 		return String.format("%s%s:%s", DOMAIN_PORT_KEY_PREFIX, domain, port);
 	}
 
+	/** Cache key for the uri-prefix mapping of a domain:port:uri. */
 	private static String domainUriKey(String domain, String port, String uri) {
 		return String.format("%s%s:%s:%s", DOMAIN_URI_KEY_PREFIX, domain, port, uri);
 	}
 
-	/** Display part for a uri: blank -> "", non-blank -> "/api" (idempotent:
-	 *  works on both the raw value and the already-normalised one). */
+	/** Human-readable URI for logs (blank shows as {@code *}). */
 	private static String uriDisplay(String uri) {
 		if (uri == null || uri.isEmpty()) {
 			return "";
@@ -140,6 +152,7 @@ public class DomainProxy implements Filter {
 		return uri.startsWith("/") ? uri : "/" + uri;
 	}
 
+	/** Registers the URI prefix so {@link #matchUri} can resolve it without the DB. */
 	private static void registerUri(String domain, String port, String uri) {
 		if (uri == null || uri.isEmpty()) {
 			return;
@@ -152,6 +165,7 @@ public class DomainProxy implements Filter {
 		}
 	}
 
+	/** Unregisters a URI prefix after its mapping is removed. */
 	private static void unregisterUri(String domain, String port, String uri) {
 		if (uri == null || uri.isEmpty()) {
 			return;
@@ -171,6 +185,10 @@ public class DomainProxy implements Filter {
 
 	/** Longest-prefix match of a request path against the configured uri mappings
 	 *  for domain:port; returns the matched uri prefix or null when none matches. */
+	/**
+	 * Resolves the uri-prefix mapping for a request path: longest registered
+	 * prefix wins, otherwise the blank-uri (catch-all) mapping applies.
+	 */
 	private static String matchUri(String domain, String port, String requestPath) {
 		String key = String.format("%s:%s", domain, port);
 		java.util.TreeSet<String> set = URI_PREFIX_REGISTRY.get(key);
@@ -189,26 +207,35 @@ public class DomainProxy implements Filter {
 		return null;
 	}
 
+	/** Servlet-filter constructor: creates the logger; config comes via {@link #setParams(Map)}. */
 	public DomainProxy() {
 		super();
 		log = LoggerFactory.getLogger(this.getClass());
 	}
 
 	// Called once during server startup (TomcatServer config load); no concurrent writes.
+	/** Applies the {@code DomainProxy} configuration block at startup. */
 	public static void setParams(final Map params) {
-		config.putAllAndReturnSlef(params);
+		config.putAllAndReturnSelf(params);
 	}
 
+	/** No-op: the shared config is set once by {@link TomcatServer}. */
 	@Override
 	public void init(FilterConfig filterConfig) throws ServletException {
 		// No-op: the shared config is set once by TomcatServer.setParams(...).
 	}
 
+	/** No-op: no per-filter resources are held. */
 	@Override
 	public void destroy() {
 		// No-op.
 	}
 
+	/**
+	 * Filter entry point: resolves the mapping for the request (uri-prefix then
+	 * catch-all) and dispatches forward / redirect / internal modes. Non-REQUEST
+	 * dispatches pass straight through.
+	 */
 	@Override
 	public void doFilter(ServletRequest servletRequest, ServletResponse servletResponse, FilterChain chain)
 			throws ServletException, IOException {
@@ -290,6 +317,8 @@ public class DomainProxy implements Filter {
 				// /default_a webapp).
 				final String fRest = dispatchPath;
 				final String fTargetPath = targetPath;
+				// Rewrites the request to the target webapp's coordinates so the
+				// cross-context forward resolves inside the target context.
 				HttpServletRequest rewritten = new HttpServletRequestWrapper(request) {
 					@Override
 					public String getRequestURI() {
@@ -383,6 +412,7 @@ public class DomainProxy implements Filter {
 		}
 	}
 
+	/** Puts the request context into the pooled console before a domain script runs. */
 	private void putConsoleParams(HttpServletRequest request, HttpServletResponse response) throws Exception {
 		Map<String, Object> consoleParams = new HashMap<String, Object>();
 		consoleParams.put("request", request);
@@ -414,6 +444,7 @@ public class DomainProxy implements Filter {
 		return domainCp;
 	}
 
+	/** Evaluates the domain's {@code getParams()} script and merges its config into the mapping. */
 	private void applyDomainScript(ConfigProperties domainCp, String domain, String port) throws Exception {
 		if (!domainCp.getBoolean("scriptEnable", true)) {
 			return;
@@ -432,10 +463,10 @@ public class DomainProxy implements Filter {
 		log.debug("domainParams class: {}", domainParams.getClass());
 		if (TomcatScriptConsole.getEngineName().equalsIgnoreCase("graalvm.js")) {
 			Map domainParamsMap = ((org.graalvm.polyglot.Value) domainParams).as(Map.class);
-			domainCp.putAllAndReturnSlef(domainParamsMap);
+			domainCp.putAllAndReturnSelf(domainParamsMap);
 		} else {
 			Map domainParamsMap = (Map) domainParams;
-			domainCp.putAllAndReturnSlef(domainParamsMap);
+			domainCp.putAllAndReturnSelf(domainParamsMap);
 		}
 		log.debug("Updated domainCp: {}", domainCp);
 	}
@@ -454,6 +485,10 @@ public class DomainProxy implements Filter {
 	 * </pre>
 	 * 
 	 * A blank/absent uri (catch-all mapping) leaves the request path untouched.
+	 */
+	/**
+	 * Builds the absolute forward URL for a mapping: rewrites the request path
+	 * relative to the mapping {@code uri} prefix and the target path.
 	 */
 	private String buildForwardUrl(String target, String mappingUri, HttpServletRequest request) {
 		String base = target.endsWith("/") ? target.substring(0, target.length() - 1) : target;
@@ -477,21 +512,7 @@ public class DomainProxy implements Filter {
 		return sb.toString();
 	}
 
-	/**
-	 * Internal (same-JVM) dispatch path for the "internal" mode: the mapping
-	 * prefix is stripped from the request path and the remainder is appended to
-	 * the target's path component, which is used as the destination webapp
-	 * context path. Example:
-	 * 
-	 * <pre>
-	 * mapping  (localhost:8443, uri=/test, target=https://127.0.0.1/default_a)
-	 * request  GET /test/foo?a=1
-	 * result   RequestDispatcher.forward to /default_a/foo (query string kept)
-	 * </pre>
-	 * 
-	 * Returns {@code null} when the target has no path component (nothing to
-	 * dispatch to).
-	 */
+	/** Path portion of a target URL (null-safe). */
 	private static String targetPathOf(String target) {
 		String targetPath;
 		try {
@@ -511,7 +532,7 @@ public class DomainProxy implements Filter {
 		return targetPath;
 	}
 
-	/** Strip the matched mapping prefix from a request path (catch-all: unchanged). */
+	/** Removes the mapping URI prefix from the request path when it matches. */
 	private static String stripMappingPrefix(String mappingUri, String path) {
 		if (path == null || path.isEmpty()) {
 			path = "/";
@@ -529,12 +550,7 @@ public class DomainProxy implements Filter {
 	private static final String[] WELCOME_CANDIDATES = { "index.html", "index.htm", "index.jsp", "default.htm",
 			"default.html" };
 
-	/**
-	 * Resolve the welcome file for a directory path inside the target webapp
-	 * (null when none of the common names exists). Tomcat's welcome-file lookup
-	 * only runs on the initial REQUEST dispatch, so internal FORWARD dispatches
-	 * must resolve it themselves.
-	 */
+	/** Resolves a welcome file (index.html etc.) for a directory path. */
 	private static String resolveWelcomeFile(ServletContext ctx, String dirPath) {
 		if (dirPath == null || dirPath.isEmpty()) {
 			dirPath = "/";
@@ -657,6 +673,7 @@ public class DomainProxy implements Filter {
 			}
 		}
 	}
+	/** Sends an HTTP error without leaking stack traces to the client. */
     private void safeSendError(HttpServletResponse response, int code, String msg) throws IOException {
         if (!response.isCommitted()) {
             boolean errorRedirectEnable = config.getBoolean("errorRedirectEnable", false).booleanValue();
@@ -681,13 +698,7 @@ public class DomainProxy implements Filter {
         this.log.warn("Response already committed, cannot send error: {} {}", new Object[]{Integer.valueOf(code), msg});
     }
 
-    /**
-     * True when the failure is a client-side abort (the connection/stream was
-     * already closed while we were writing): ClientAbortException, or an
-     * IOException whose cause chain mentions broken pipe / connection reset /
-     * a closed HTTP/2 stream. Such errors mean there is nobody left to receive
-     * an error page, so they are logged at debug to keep the server logs clean.
-     */
+	/** Whether the throwable is a client abort (harmless, not logged as error). */
     private static boolean isClientAbort(Throwable t) {
         for (Throwable cur = t; cur != null; cur = cur.getCause()) {
             if (cur instanceof ClientAbortException) {
@@ -706,6 +717,7 @@ public class DomainProxy implements Filter {
         return false;
     }
 
+	/** Reusable {@link HttpClient} for a given connect timeout (cached per timeout). */
     private HttpClient getHttpClient(long connectTimeoutMs) {
         // Guard against non-positive timeouts (Duration.ofMillis(0) throws on build).
         long timeout = connectTimeoutMs > 0 ? connectTimeoutMs : DEFAULT_PROXY_CONNECT_TIMEOUT_MS;
@@ -715,6 +727,7 @@ public class DomainProxy implements Filter {
                 .build());
     }
 
+	/** Management API: creates a catch-all mapping for a domain:port from a script file. */
     public static Map<String, Object> setDomainMapping(String domain, String port, String scriptFile) {
 		Map<String,Object> resMap = new HashMap<>();
         if (CommonTools.isBlank(domain)) {
@@ -745,17 +758,22 @@ public class DomainProxy implements Filter {
         return setDomainMapping(domain, port, params);
     }
 
+	/** Management API: creates a catch-all mapping for a domain:port with default params. */
     public static Map<String, Object> setDomainMapping(String domain, String port) {
         Map<String, Object> params = new HashMap<>();
         params.put("scriptEnable", true);
         return setDomainMapping(domain, port, params);
     }
 
-	/** Legacy 3-arg form: no uri (catch-all for every URI under domain:port). */
+	/** Management API: creates a catch-all mapping from a params map (mode/target/...). */
 	public static Map<String, Object> setDomainMapping(String domain, String port, Map<String, Object> params) {
 		return setDomainMapping(domain, port, "", params);
 	}
 
+	/**
+	 * Management API: creates/updates a uri-prefix mapping
+	 * ({@code domain:port/uri → target}). Blank uri = catch-all.
+	 */
 	public static Map<String, Object> setDomainMapping(String domain, String port, String uri, Map<String, Object> params) {
 		Map<String,Object> resMap = new HashMap<>();
 		if (CommonTools.isBlank(domain)) {
@@ -811,11 +829,12 @@ public class DomainProxy implements Filter {
 		}
 	}
 
-    /** Legacy 2-arg form: removes the blank-uri (catch-all) mapping. */
+	/** Management API: removes the catch-all mapping of a domain:port. */
     public static Map<String, Object> removeDomainMapping(String domain, String port) {
         return removeDomainMapping(domain, port, "");
     }
 
+	/** Management API: removes the uri-prefix mapping of a domain:port:uri. */
     public static Map<String, Object> removeDomainMapping(String domain, String port, String uri) {
         Map<String, Object> resMap = new HashMap<>();
         if (CommonTools.isBlank(domain)) {
@@ -856,10 +875,12 @@ public class DomainProxy implements Filter {
     }
 
     /** Legacy 2-arg form: queries the blank-uri (catch-all) mapping. */
+	/** Management API: reads the catch-all mapping of a domain:port (cached). */
     public static Map<String, Object> queryDomainMapping(String domain, String port) {
         return queryDomainMapping(domain, port, "");
     }
 
+	/** Management API: reads a uri-prefix mapping (cached). */
     public static Map<String, Object> queryDomainMapping(String domain, String port, String uri) {
         Map<String, Object> resMap = new HashMap<>();
         if (CommonTools.isBlank(domain)) {
@@ -899,6 +920,7 @@ public class DomainProxy implements Filter {
         }
     }
 
+	/** Management API: lists every mapping (all domains). */
     public static Map<String, Object> queryDomainMappings() {
         Map<String, Object> resMap = new HashMap<>();
         try {
@@ -926,6 +948,7 @@ public class DomainProxy implements Filter {
         }
     }
 
+	/** All non-deleted mappings from {@code domain_mapping_param}. */
     private static List<Map<String, Object>> getDomainMappingParams() throws Exception {
         CacheDriverExecutor cde = null;
         String sql = "SELECT * FROM domain_mapping_param WHERE deleted = :deleted ORDER BY created_at ASC";
@@ -940,6 +963,7 @@ public class DomainProxy implements Filter {
         }
     }
 
+	/** Loads the mapping row for domain:port:uri (blank uri = catch-all). */
     private static Map<String, Object> getDomainMappingParam(String domain, String port, String uri) throws Exception {
         CacheDriverExecutor cde = null;
         String sql = "SELECT * FROM domain_mapping_param WHERE domain = :domain AND port = :port AND uri = :uri AND deleted = :deleted";
@@ -959,6 +983,7 @@ public class DomainProxy implements Filter {
 
     // C12 fix: serialise create/update so two racing setDomainMapping calls
     // cannot both pass the "does it exist" check and write duplicate rows.
+	/** Inserts a mapping row; returns {@code false} when the row already exists. */
     private static synchronized boolean createDomainMappingParam(String domain, String port, String uri, Map<String, Object> domainParams) throws Exception {
 		Map<String,Object> domainMappingParam = getDomainMappingParam(domain, port, uri);
 		
@@ -988,6 +1013,7 @@ public class DomainProxy implements Filter {
     }
 
     // C12 fix: serialise create/update (see createDomainMappingParam).
+	/** Updates an existing mapping row; returns {@code false} when absent. */
     private static synchronized boolean updateDomainMappingParam(String domain, String port, String uri, Map<String, Object> domainParams) throws Exception {
 		Map<String,Object> domainMappingParam = getDomainMappingParam(domain, port, uri);
 		
@@ -1010,9 +1036,7 @@ public class DomainProxy implements Filter {
         }
     }	
 
-    /** B8 fix: soft-delete every uri-specific mapping for domain:port so a
-     *  catch-all removal also clears the DB rows (previously only the runtime
-     *  cache/registry were dropped and the uri rows resurrected on restart). */
+	/** Soft-deletes every mapping row of a domain:port. */
     private static boolean removeAllDomainMappingParams(String domain, String port) throws Exception {
         CacheDriverExecutor cde = null;
         String sql = "UPDATE domain_mapping_param SET deleted_at = :deleted_at, deleted = :deleted"
@@ -1032,6 +1056,7 @@ public class DomainProxy implements Filter {
         }
     }
 
+	/** Soft-deletes the mapping row for domain:port:uri (blank uri = catch-all). */
     private static boolean removeDomainMappingParam(String domain, String port, String uri) throws Exception {
 		Map<String,Object> domainMappingParam = getDomainMappingParam(domain, port, uri);
 		

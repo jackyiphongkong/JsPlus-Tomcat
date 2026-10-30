@@ -16,6 +16,10 @@ REM      mode in which the suites can run.
 REM      Stdin is redirected to NUL so com.killcoding.jsplus.Main exits
 REM      right after the -Task completes (otherwise it blocks on the
 REM      interactive scanner, see Main.java scanner loop).
+REM   4) LoadTest.js (embedded Tomcat, LOADTEST_* env tunables).
+REM   5) Archive reports as docs/reports/<version>.jar following the
+REM      JsPlus-Core docs layout (docs/latest/report/ is the browsable
+REM      newest-reports site; test_reports/ keeps a legacy copy).
 REM ------------------------------------------------------------------
 
 if "%1"=="" (
@@ -210,6 +214,43 @@ REM TestAll leaves nothing behind. RC was captured right after TestAll.js.
 if not defined RC set "RC=1"
 echo [TestAll] Stopping all remaining services...
 call "%JS_PLUS_PATH%bin\StopAll.bat"
+
+REM ------------------------------------------------------------------
+REM Step 4b: Archive the test reports under the same docs layout as the
+REM javadoc site (JsPlus-Core standard): docs/reports/<version>.jar (one
+REM jar per run) plus docs/latest/report/ as the browsable newest reports.
+REM Version is taken from the jsplus-tomcat jar name. A failure to archive
+REM is only a WARN and never changes the suite exit code (RC captured above).
+REM ------------------------------------------------------------------
+set "TOMCAT_JAR="
+for %%j in ("%JS_PLUS_PATH_ORIGIN%..\LibHome\jsplus\default\jsplus-tomcat-*.jar") do set "TOMCAT_JAR=%%j"
+if not defined TOMCAT_JAR (
+    echo WARN: jsplus-tomcat-*.jar not found, skipping report archive.
+) else (
+    for %%f in ("!TOMCAT_JAR!") do set "TOMCAT_FNAME=%%~nxf"
+    set "TOMCAT_VERSION=!TOMCAT_FNAME:jsplus-tomcat-=!"
+    set "TOMCAT_VERSION=!TOMCAT_VERSION:.jar=!"
+    if not defined TOMCAT_VERSION (
+        echo WARN: Cannot extract version from !TOMCAT_JAR!, skipping report archive.
+    ) else (
+        echo [TestAll] Archiving test reports as docs/reports/!TOMCAT_VERSION!.jar ^(docs/latest/report^)...
+        if not exist "%JS_PLUS_PATH_ORIGIN%..\docs\reports" mkdir "%JS_PLUS_PATH_ORIGIN%..\docs\reports"
+        if not exist "%JS_PLUS_PATH_ORIGIN%..\docs\latest\report" mkdir "%JS_PLUS_PATH_ORIGIN%..\docs\latest\report"
+        if exist "%JS_PLUS_PATH_ORIGIN%..\docs\reports\!TOMCAT_VERSION!.jar" del "%JS_PLUS_PATH_ORIGIN%..\docs\reports\!TOMCAT_VERSION!.jar"
+        for %%b in ("!JAVA_BIN!") do set "JAR_BIN=%%~dpbjar.exe"
+        if exist "!JAR_BIN!" (
+            "!JAR_BIN!" cf "%JS_PLUS_PATH_ORIGIN%..\docs\reports\!TOMCAT_VERSION!.jar" -C "%JS_PLUS_PATH_ORIGIN%..\docs\latest\report" .
+            if errorlevel 1 (
+                echo WARN: Failed to pack test report jar, continuing.
+            ) else (
+                echo [TestAll] Packed docs/reports/!TOMCAT_VERSION!.jar
+            )
+        ) else (
+            echo WARN: jar.exe not found next to "!JAVA_BIN!", continuing.
+        )
+    )
+)
+
 echo TestAll exit code: %RC%
 exit /b %RC%
 

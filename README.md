@@ -176,7 +176,11 @@ JsPlus-Tomcat/
 │   ├── ghost/                  # ghost helper scripts (H2Ghost, TomcatGhost)
 ├── LibHome/                    # dependency JARs (tomcat, h2, graalvm, nashorn, jsplus …)
 ├── dbscript/                   # change.sql / fallback.sql (H2 schema)
-├── build.xml                   # Ant build → LibHome/jsplus/default/jsplus-tomcat.jar
+├── test/                       # TestAll.bat/.sh + eight JS suites + LoadTest.js
+├── docs/                       # latest/api, apis/<ver>.jar, latest/report, reports/<ver>.jar
+├── version.properties          # build version (jr.major/minor/patch)
+├── changes.log / changes_zh-HK.log  # build history (en / zh-HK)
+├── build.xml                   # Ant build → LibHome/jsplus/default/jsplus-tomcat-<version>.jar
 ├── ant.bat                     # Windows Ant wrapper
 └── ant.sh                      # Linux/macOS Ant wrapper
 ```
@@ -187,7 +191,7 @@ JsPlus-Tomcat/
 
 - **Java** — a JDK under `../Java/default/` (e.g. GraalVM JDK 25), or any JDK reachable via
   `JAVA_HOME` / `PATH` (launcher scripts fall back automatically).
-- **Apache Ant** — only needed to rebuild the `jsplus-tomcat.jar` (not required to run); bundled
+- **Apache Ant** — only needed to rebuild `jsplus-tomcat-<version>.jar` (not required to run); bundled
   in `ant/default/`, falling back to the system `ANT_HOME` / PATH.
 - **H2** — bundled in `LibHome/h2/default/`.
 
@@ -198,8 +202,11 @@ JsPlus-Tomcat/
 Compiles `src/` and packages `com/**` and `org/**` into:
 
 ```
-LibHome/jsplus/default/jsplus-tomcat.jar
+LibHome/jsplus/default/jsplus-tomcat-<version>.jar
 ```
+
+The file name carries the build version from `version.properties` (patch +1 on
+every build), so releases never overwrite each other.
 
 ```sh
 # Linux / macOS
@@ -224,6 +231,22 @@ v<version>  <build timestamp>  <note>
 
 Pass `-Dchange.note="..."` (e.g. `ant -Dchange.note="add auth lockout"`) to record
 a short description on that line. The header is written on the first build only.
+
+`build` also regenerates the API documentation on every run:
+
+- the javadoc site is written to **`docs/latest/api/`** (`windowtitle` carries the
+  version, `-Xdoclint:none`, source links included) and archived as
+  **`docs/apis/<version>.jar`** (one jar per release);
+- skip this step with `-Djavadoc.skip=true` (useful for quick compile-only cycles).
+
+The `docs/` tree mirrors the JsPlus-Core layout:
+
+| Path | Content |
+|---|---|
+| `docs/latest/api/` | API javadoc site of the newest release — open `docs/latest/api/index.html` |
+| `docs/apis/<version>.jar` | Archived API javadoc jar per release (one jar per version) |
+| `docs/latest/report/` | Test reports of the newest run — every `TestAll.bat` / `TestAll.sh` run writes here; open `docs/latest/report/TestAll-Report.html` |
+| `docs/reports/<version>.jar` | Archived test-report jar per run (one jar per version) |
 
 After every build the java sources in `src/` are compared (read-only) against the
 Git mirror at `D:/Githubrepos/JsPlus-Tomcat/src`. When differences are found, a
@@ -749,23 +772,26 @@ instead of command-line parsing.
 
 ### Automated test scripts (console mode)
 
-Five runnable suites live in `test/` (repo-root).
+Eight runnable suites live in `test/` (repo-root).
 They run inside the live JsPlus console — no third-party test framework and no
 launcher scripts needed:
 
 | Script | Coverage |
 |---|---|
-| `TestBase.js` | Shared harness (Java bindings, `check`/`isOk`/`msg`, `callTomcat`, `runCmd`/`curlStatus`, `dbVerify` SQL verification, HTML/MD/CI-summary report writers) |
-| `TestAll.js` | Unified entry — runs all five suites in sequence and prints an aggregate pass/fail summary |
+| `TestBase.js` | Shared harness (Java bindings, `check`/`isOk`/`msg`, `callTomcat`, `runCmd`/`curlStatus`, `dbVerify` SQL verification, HTML/MD/CI-summary report writers; reports are mirrored to `docs/latest/report/` and the legacy `test_reports/`) |
+| `TestAll.js` | Unified entry — runs all eight suites in sequence and prints an aggregate pass/fail summary |
 | `TestDomainProxy.js` | 21 cases — domain mapping CRUD + live reverse-proxy request via `curl` (incl. `mode=internal` dispatch + validation)
 | `TestSecurityFilter.js` | 16 cases — basic-auth CRUD (`domain_auth` / `domain_auth_user`) + live `401`/`200` checks via `curl` |
 | `TestIpFilter.js` | 20 cases — IP rule CRUD (`domain_ip_rule`, ALLOW/DENY incl. `uri` prefix + ALLOW-over-DENY) + live `403`/`200` checks via `curl` |
 | `TestIpAttackDefense.js` | 16 cases — defense-rule CRUD (`ip_defense_rule` / `ip_ban` / `ip_request_log`) + live auto-ban flow (`403`) |
-| `TestTomcatServer.js` | 34 cases — TomcatServer behaviour through the `tomcat` console entry (`TomcatEmbed.js`): `addSslHost` + cleanup, `Webapp.contextPath`/`Webapp.appBase` config contract (incl. legacy-key regression guard), `SSL.*` block, keystore readiness (JKS + alias + trust anchor), read-only behaviour smoke (`getTomcat` / `queryDomainSslHosts` / `loadDomainSslHosts`), DomainSslHost CRUD, and the HTTP/2 contract (`Http2.enable=true` config + live h2c handshake on the plain connector) — every API call records its `{code, msg}` return value, DB writes carry a `dbVerify` (`SELECT *`) verification + cleanup |
+| `TestTomcatServer.js` | 36 cases — TomcatServer behaviour through the `tomcat` console entry (`TomcatEmbed.js`): `addSslHost` + cleanup, `Webapp.contextPath`/`Webapp.appBase` config contract (incl. legacy-key regression guard), `SSL.*` block, keystore readiness (JKS + alias + trust anchor), read-only behaviour smoke (`getTomcat` / `queryDomainSslHosts` / `loadDomainSslHosts`), DomainSslHost CRUD, and the HTTP/2 contract (`Http2.enable=true` config + live h2c handshake on the plain connector) — every API call records its `{code, msg}` return value, DB writes carry a `dbVerify` (`SELECT *`) verification + cleanup |
+| `TestAuthLockout.js` | 7 cases — account lockout after N failed attempts (`failed_attempts` / `locked_until`), rejection while locked, unlock API, and counter continuation after unlock (live `401` checks + `dbVerify`) |
+| `TestFreed.js` | 6 cases — shared-infrastructure smoke checks that must keep working after the security/IP changes |
+| `TestServerLog.js` | 11 cases — async web-log pipeline (`ServerLog`): write path, CSV record shape, batching/flush behaviour, and per-domain log isolation |
 
 Run the full suite in one go (stops services -> DB init -> H2 -> embedded
-Tomcat -> 108 checks -> load test against a standalone Tomcat ->
-`test_reports/`):
+Tomcat -> **134 checks** -> load test against a standalone Tomcat ->
+`docs/latest/report/` + `docs/reports/<version>.jar`):
 
 - Windows: `test\TestAll.bat`
 - Linux: `test/TestAll.sh`
@@ -791,14 +817,21 @@ Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestIpAttackDefense.js');
 /
 Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestTomcatServer.js');
 /
+Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestAuthLockout.js');
+/
+Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestFreed.js');
+/
+Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestServerLog.js');
+/
 ```
 
 Prerequisites (only for JS-console runs; `TestAll.bat` / `TestAll.sh` handle all of this automatically):
 
 - Start the services first: `StartH2.bat/sh`, then `StartTomcat.bat/sh`.
 - For the SecurityFilter suite, set `SecurityFilter.cacheSeconds=0` in
-  `JsPlus/config/tomcat.properties` and restart Tomcat — otherwise the default
-  60 s auth-enable cache makes the live checks read stale state.
+  `JsPlus/config/tomcat.properties` and restart Tomcat — `0` means "do not cache"
+  in this project (a positive value would enable the auth-enable cache), so the
+  live checks read the table state on every request.
 - For the IpFilter suite, set `IpFilter.cacheSeconds=0` in
   `JsPlus/config/tomcat.properties` and restart Tomcat — the live `403`/`200`
   checks must read the rule list unconditionally.
@@ -809,22 +842,27 @@ Prerequisites (only for JS-console runs; `TestAll.bat` / `TestAll.sh` handle all
 
 Each check prints `[PASS]` / `[FAIL]`, and a color-coded HTML report
 (green PASS / red FAIL, with Case Id / Test Objective / Result / Detail) is
-written to `test_reports/TestDomainProxy-Report.html`,
-`test_reports/TestSecurityFilter-Report.html`,
-`test_reports/TestIpFilter-Report.html`,
-`test_reports/TestIpAttackDefense-Report.html` and
-`test_reports/TestTomcatServer-Report.html`.
+written to `docs/latest/report/` — one `Test<Suite>-Report.html` / `.md` pair per
+suite, plus an aggregate `TestAll-Report.html` / `.md` and
+`TestAll-CI-Summary.md`. The same files are mirrored to the legacy
+`test_reports/` directory for older tooling.
 
 Step 3 of `TestAll.bat` / `TestAll.sh` then starts a standalone Tomcat and runs
 the built-in load test (`test/LoadTest.js`, a pure-JS port executed through the
 JsPlus console — no separate Java compilation step; defaults:
 `https://localhost:8443/default/`, 10 concurrent x 1000 requests, 30 s timeout;
 override via `LOADTEST_URL` / `LOADTEST_CONCURRENCY` / `LOADTEST_TOTAL` /
-`LOADTEST_TIMEOUT`), writing `test_reports/loadtest-result.json` (raw + summary
+`LOADTEST_TIMEOUT`), writing `docs/latest/report/loadtest-result.json` (raw + summary
 metrics: QPS, avg, p50/p90/p95/p99, max, status distribution, transport errors)
-and an offline HTML chart dashboard `test_reports/loadtest-dashboard.html`
+and an offline HTML chart dashboard `docs/latest/report/loadtest-dashboard.html`
 (no CDN, no JS — metric cards, status distribution, per-second throughput SVG
-and a latency histogram). The load test warms up with a few unmeasured requests
+and a latency histogram). Both outputs also record the runtime environment of the
+run — `environment.before` / `environment.after` in the JSON and a
+**Runtime Environment** panel in the dashboard: OS/arch, CPU cores, host and
+process CPU load, physical memory total/free/used, JVM heap max/used, JDK
+version/vendor/VM, JVM input arguments and host process count. A QPS figure is
+only comparable against runs captured on the same environment, so the context is
+archived with the number instead of being reconstructed later. The load test warms up with a few unmeasured requests
 and retries transient transport-level failures (connect/reset/timeout) twice,
 so only requests that still fail after retry are counted as `failed`. It uses
 `HttpClient.sendAsync` in batches with `CompletableFuture.allOf().get()` for
@@ -856,10 +894,23 @@ against `main` / `master`:
 
 1. Check out the repository.
 2. Set up an Oracle GraalVM 25 (`$JAVA_HOME` is used as the fallback Java).
-3. Install Ant and build `LibHome/jsplus/default/jsplus-tomcat.jar` (`ant build`).
-4. Run `test/TestAll.sh` — the same one-command flow as locally.
-5. Upload `test_reports/` and `logs/` as the `test-reports` artifact (downloadable from the
-   Actions run page).
+3. Install Ant.
+4. `ant build` — compiles, packages `LibHome/jsplus/default/jsplus-tomcat-<version>.jar`,
+   and regenerates the API site (`docs/latest/api/` + `docs/apis/<version>.jar`).
+5. Verify that the packaged JAR matches `version.properties` (guards against a
+   stale or mis-named artefact).
+6. Verify the javadoc site (`docs/latest/api/index.html` and
+   `docs/apis/<version>.jar`).
+7. Run `test/TestAll.sh` — the same one-command flow as locally.
+8. Publish `TestAll-CI-Summary.md` to the run's job summary (`if: always()`).
+9. Upload `test-reports` — `docs/latest/report/`, `docs/reports/`,
+   `docs/latest/api/`, `docs/apis/*.jar`, the legacy `test_reports/`, `test/*.log`,
+   `logs/`, `build-verify.log` and the built JAR (`if: always()`,
+   `if-no-files-found: warn`).
+
+Both the summary and the artifact upload run with `if: always()`, so a run that
+fails at an earlier step still publishes its logs and partial reports — a failed
+run is exactly when they are needed.
 
 Note: `Java/` (bundled JDKs) is git-ignored, so the CI runner relies on the
 system JDK; `LibHome/` (all runtime JARs) is committed.

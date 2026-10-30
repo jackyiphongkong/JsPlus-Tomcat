@@ -199,5 +199,29 @@ echo "[TestAll] Stopping Tomcat after load test..."
 "${JS_PLUS_PATH}bin/StopTomcat.sh"
 
 RC="${RC:-1}"
+
+# ------------------------------------------------------------------
+# Step 4b: Archive the test reports under the same docs layout as the
+# javadoc site (JsPlus-Core standard): docs/reports/<version>.jar (one
+# jar per run) plus docs/latest/report/ as the browsable newest reports.
+# Version is taken from the jsplus-tomcat jar name. A failure to archive
+# is only a WARN and never changes the suite exit code (RC captured above).
+# ------------------------------------------------------------------
+PROJECT_ROOT="${JS_PLUS_PATH}.."
+TOMCAT_JAR=$(ls "$PROJECT_ROOT/LibHome/jsplus/default/"jsplus-tomcat-*.jar 2>/dev/null | head -n 1)
+if [ -z "$TOMCAT_JAR" ]; then
+    echo "WARN: jsplus-tomcat-*.jar not found, skipping report archive."
+else
+    TOMCAT_VERSION=$(basename "$TOMCAT_JAR" | sed 's/^jsplus-tomcat-//; s/\.jar$//')
+    echo "[TestAll] Archiving test reports as docs/reports/${TOMCAT_VERSION}.jar (docs/latest/report)..."
+    mkdir -p "$PROJECT_ROOT/docs/reports" "$PROJECT_ROOT/docs/latest/report"
+    rm -f "$PROJECT_ROOT/docs/reports/${TOMCAT_VERSION}.jar"
+    if jar cf "$PROJECT_ROOT/docs/reports/${TOMCAT_VERSION}.jar" -C "$PROJECT_ROOT/docs/latest/report" .; then
+        echo "[TestAll] Packed docs/reports/${TOMCAT_VERSION}.jar"
+    else
+        echo "WARN: Failed to pack test report jar, continuing."
+    fi
+fi
+
 echo "TestAll exit code: $RC"
 exit "$RC"

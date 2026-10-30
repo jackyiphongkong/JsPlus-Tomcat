@@ -52,6 +52,17 @@ import jakarta.servlet.ServletResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+/**
+ * Basic-Auth gateway filter backed by {@code domain_auth} /
+ * {@code domain_auth_user}.
+ * <p>
+ * Every request is first recorded through {@link ServerLog}. When auth is
+ * enabled for the domain:port (or the server-wide {@code 0:0} fallback), the
+ * {@code Authorization: Basic} header is validated against the configured
+ * users; failed attempts are counted and the account is locked once the
+ * configured attempt limit is reached (see {@link #setAuthLockPolicy}). Unlock
+ * happens after the lock window expires or via {@link #unlockAuthUser}.
+ */
 public class SecurityFilter implements Filter {
 
     public final static String FILTER_NAME = "TomcatServerSecurityFilter";
@@ -65,14 +76,20 @@ public class SecurityFilter implements Filter {
      *  accounts early under concurrency). */
     private static final ConcurrentHashMap<String, Object> AUTH_CHECK_LOCKS = new ConcurrentHashMap<>();
 
+    /** Gets the per-account lock object for a cache-key (one lock per account). */
     private static Object authCheckLock(String key) {
         return AUTH_CHECK_LOCKS.computeIfAbsent(key, k -> new Object());
     }
 
+    /** Servlet-filter constructor: state is injected later via {@link #setParams(Map)}. */
     public SecurityFilter() {
         super();
     }
 
+    /**
+     * Filter entry point: writes the web-log line, then enforces Basic auth when
+     * enabled — 401 + {@code WWW-Authenticate} on missing/invalid credentials.
+     */
     @Override
     public void doFilter(ServletRequest arg0, ServletResponse arg1, FilterChain chain)
             throws IOException, ServletException {
@@ -131,6 +148,7 @@ public class SecurityFilter implements Filter {
         }
     }
 
+    /** Validates credentials against the cached user (lockout-aware). */
     private boolean checkUserFromCache(HttpServletRequest request ,String domain, String port, String username, String pass) {
         if(CommonTools.isBlank(domain)){
             return false;
@@ -159,7 +177,11 @@ public class SecurityFilter implements Filter {
                         // and the account lockout (failed_attempts / locked_until)
                         // stay accurate.
                         Integer cacheSeconds = config.getInteger("SecurityFilter.cacheSeconds", 60);
-                        Cache.set(cacheKey,userAuthed,cacheSeconds);
+                        // D3 fix (Core 6.1.163): life==0 means "never expire" in
+                        // Cache.set; the project convention is 0 = no cache.
+                        if (cacheSeconds != null && cacheSeconds > 0) {
+                            Cache.set(cacheKey,userAuthed,cacheSeconds);
+                        }
                     }
                     String logType = userAuthed ? "Authorized" : "Unauthorized";
                     String paramsMsg = String.format("username=%s",username);
@@ -172,6 +194,11 @@ public class SecurityFilter implements Filter {
         return userAuthed;
     }
 
+    /**
+     * Core credential check with lockout: locked accounts are rejected until
+     * the lock window passes; each failure increments the attempt counter and
+     * locks the account at the limit.
+     */
     private boolean checkUser(String domain, String port, String username, String pass) {
         if(CommonTools.isBlank(domain)){
             return false;
@@ -250,6 +277,7 @@ public class SecurityFilter implements Filter {
         return false;
     }
 
+    /** Safe integer parse (blank/non-numeric → 0). */
     private static int toInt(Object value) {
         if (value == null) return 0;
         if (value instanceof Number) return ((Number) value).intValue();
@@ -260,6 +288,7 @@ public class SecurityFilter implements Filter {
         }
     }
 
+    /** Clears the failed-attempt counter after a successful login. */
     private static void resetAuthLockout(Map<String, Object> user) throws Exception {
         String sql = "UPDATE domain_auth_user SET failed_attempts = 0, locked_until = NULL, updated_at = :updated_at WHERE id = :id";
         CacheDriverExecutor cde = null;
@@ -277,6 +306,7 @@ public class SecurityFilter implements Filter {
         }
     }
 
+    /** Persists the lock state (failed attempts + locked-until timestamp) for a user. */
     private static void updateAuthUserLock(Map<String, Object> user, int failedAttempts, Timestamp lockedUntil) throws Exception {
         String sql = "UPDATE domain_auth_user SET failed_attempts = :failed_attempts, locked_until = :locked_until, updated_at = :updated_at WHERE id = :id";
         CacheDriverExecutor cde = null;
@@ -296,6 +326,7 @@ public class SecurityFilter implements Filter {
         }
     }
 
+    /** Whether auth is enabled for the domain:port ({@code domain_auth} row, cached). */
     private synchronized boolean isAuthEnable(String domain, String port) throws Exception {
         String domainPort = String.format("%s:%s", domain, port);
         String domainPortKey = String.format("SecurityFilter.%s.authEnable", domainPort);
@@ -304,11 +335,17 @@ public class SecurityFilter implements Filter {
         if (authEnable == null) {
             authEnable = checkDomainAuthEnable(domain, port);
             Integer cacheSeconds = config.getInteger("SecurityFilter.cacheSeconds", 60);
-            Cache.set(domainPortKey, authEnable, cacheSeconds);
+            // D3 fix (Core 6.1.163): Cache.set treats life==0 as "never expire",
+            // while this project uses 0 as "do not cache" (tests need immediate
+            // visibility of auth changes), so only positive values are cached.
+            if (cacheSeconds != null && cacheSeconds > 0) {
+                Cache.set(domainPortKey, authEnable, cacheSeconds);
+            }
         }
         return authEnable;
     }    
 
+    /** Loads one user row ({@code domain_auth_user}) for domain:port + username. */
     private static Map<String, Object> getDomainAuthUser(String domain, String port,String username) throws Exception {         
         CacheDriverExecutor cde = null;
         String sql = "SELECT * FROM domain_auth_user WHERE domain_auth_id = :domain_auth_id AND username = :username AND deleted = :deleted";
@@ -335,6 +372,7 @@ public class SecurityFilter implements Filter {
         }
     }  
 
+    /** Management API: single user lookup. */
     public static Map<String, Object> queryDomainAuthUser(String domain, String port,String username) throws Exception { 
         Map<String,Object> resMap = new HashMap<String,Object>();
         String msg = "";
@@ -355,6 +393,7 @@ public class SecurityFilter implements Filter {
         return resMap;
     }
     
+    /** Management API: lists all users of a domain:port. */
     public static Map<String, Object> queryDomainAuthUsers(String domain, String port) throws Exception {   
         Map<String,Object> resMap = new HashMap<String,Object>();
         String msg = "";
@@ -373,6 +412,7 @@ public class SecurityFilter implements Filter {
         return resMap;
     }     
     
+    /** All users of a domain:port from {@code domain_auth_user}. */
     private static List<Map<String, Object>> getDomainAuthUsers(String domain, String port) throws Exception {         
         CacheDriverExecutor cde = null;
         String sql = "SELECT * FROM domain_auth_user WHERE domain_auth_id = :domain_auth_id AND deleted = :deleted ORDER BY username ASC";
@@ -394,6 +434,7 @@ public class SecurityFilter implements Filter {
         }
     }      
 
+    /** Management API: creates/updates a user (plaintext password is hashed on write). */
     public static Map<String, Object> updateDomainAuthUser(String domain, String port, String username,String plaintextPass) {
         Map<String,Object> resMap = new HashMap<String,Object>();
         if(CommonTools.isBlank(domain)){
@@ -446,9 +487,10 @@ public class SecurityFilter implements Filter {
             params.put("updated_at", currentTime);
             cde = new CacheDriverExecutor(conn);
             cde.execute(sql, params);
-            Integer cacheSeconds = config.getInteger("SecurityFilter.cacheSeconds", 60);
+            // D1 fix: Cache.set(key, null, ...) is a no-op; Cache.remove evicts
+            // the cached auth result so the next login re-reads the password.
             String cacheKey = String.format("%s:%s.%s",domain,port,username);
-            Cache.set(cacheKey,null,cacheSeconds);
+            Cache.remove(cacheKey);
             resMap.put("code",1);
             resMap.put("msg",String.format("DomainAuthUser %s:%s.%s updated successfully.", domain, port,username));
             return resMap;
@@ -461,6 +503,7 @@ public class SecurityFilter implements Filter {
         }
     }
 
+    /** Management API: removes a user (soft delete). */
    public static Map<String, Object> removeDomainAuthUser(String domain, String port, String username) {
     Map<String, Object> resMap = new HashMap<>();
         if(CommonTools.isBlank(domain)){
@@ -504,9 +547,10 @@ public class SecurityFilter implements Filter {
             params.put("deleted_at", currentTime);
             cde = new CacheDriverExecutor(conn);
             cde.execute(sql, params);
-            Integer cacheSeconds = config.getInteger("SecurityFilter.cacheSeconds", 60);
+            // D1 fix: Cache.set(key, null, ...) is a no-op; use Cache.remove so
+            // the next login attempt re-reads the DB (no stale auth result).
             String cacheKey = String.format("%s:%s.%s",domain,port,username);
-            Cache.set(cacheKey,null,cacheSeconds);
+            Cache.remove(cacheKey);
             resMap.put("code",1);
             resMap.put("msg",String.format("DomainAuthUser %s:%s - %s removed successfully.", domain, port,username));
             return resMap;
@@ -521,6 +565,7 @@ public class SecurityFilter implements Filter {
 
     // C6 fix: serialise creates so two racing calls cannot both pass the
     // duplicate check and write two domain_auth_user rows for the same login.
+    /** Management API: creates a user with default lock policy (idempotent per username). */
     public synchronized static Map<String, Object> createDomainAuthUser(String domain, String port, String username,String plaintextPass) {
         Map<String, Object> resMap = new HashMap<>();
         if(CommonTools.isBlank(domain)){
@@ -592,6 +637,7 @@ public class SecurityFilter implements Filter {
 
     // C6 fix: serialise creates so two racing calls cannot both write a
     // duplicate domain_auth row for the same domain:port.
+    /** Management API: enables/disables Basic auth for a domain:port. */
     public synchronized static Map<String,Object> createDomainAuth(String domain, String port, Boolean authEnable) {
         Map<String,Object> resMap = new HashMap<String,Object>();
 
@@ -622,6 +668,9 @@ public class SecurityFilter implements Filter {
             params.put("deleted", false);
             cde = new CacheDriverExecutor(conn);
             cde.execute(sql, params);
+            // D1 fix: drop any cached "auth disabled" flag for this domain:port so
+            // the first request after creation already sees auth enabled.
+            Cache.remove(String.format("SecurityFilter.%s:%s.authEnable", domain, port));
             resMap.put("code",1);
             resMap.put("msg","DomainAuth created successfully.");
             return resMap;
@@ -635,6 +684,7 @@ public class SecurityFilter implements Filter {
         }
     }
 
+    /** Management API: toggles the auth switch for a domain:port. */
     public static Map<String,Object> updateDomainAuth(String domain, String port, Boolean authEnable) {
         Map<String,Object> resMap = new HashMap<String,Object>();
         CacheDriverExecutor cde = null;
@@ -659,6 +709,9 @@ public class SecurityFilter implements Filter {
             params.put("updated_at", currentTime);
             params.put("deleted", false);
             cde.execute(sql, params);
+            // D1 fix: invalidate the cached auth-enable flag so the switch applies
+            // immediately instead of waiting out SecurityFilter.cacheSeconds.
+            Cache.remove(String.format("SecurityFilter.%s:%s.authEnable", domain, port));
             resMap.put("code",1);
             resMap.put("msg","DomainAuth updated successfully.");
             return resMap;
@@ -672,6 +725,7 @@ public class SecurityFilter implements Filter {
         }
     }
 
+    /** Management API: disables auth for a domain:port (soft delete). */
    public static Map<String,Object> removeDomainAuth(String domain, String port) {
         Map<String,Object> resMap = new HashMap<String,Object>();
         CacheDriverExecutor cde = null;
@@ -698,6 +752,9 @@ public class SecurityFilter implements Filter {
             params.put("deleted_at", currentTime);
             params.put("deleted", true);
             cde.execute(sql, params);
+            // D1 fix: invalidate the cached auth-enable flag so auth is lifted
+            // immediately after the row is soft-deleted.
+            Cache.remove(String.format("SecurityFilter.%s:%s.authEnable", domain, port));
             resMap.put("code",1);
             resMap.put("msg","DomainAuth removed successfully.");
             return resMap;
@@ -711,6 +768,7 @@ public class SecurityFilter implements Filter {
         }
     }    
 
+    /** Loads the auth config row for a domain:port (cached). */
     private static Map<String, Object> getDomainAuth(String domain, String port) throws Exception {
         CacheDriverExecutor cde = null;
         String sql = "SELECT * FROM domain_auth WHERE domain = :domain AND port = :port AND deleted = :deleted";
@@ -729,6 +787,7 @@ public class SecurityFilter implements Filter {
         }
     }
 
+    /** All auth config rows (management API). */
     private static List<Map<String, Object>> getDomainAuths() throws Exception {
         CacheDriverExecutor cde = null;
         String sql = "SELECT * FROM domain_auth WHERE deleted = :deleted ORDER BY created_at ASC";
@@ -743,6 +802,7 @@ public class SecurityFilter implements Filter {
         }
     }  
     
+    /** Management API: lists every auth config. */
     public static Map<String, Object> queryDomainAuths() throws Exception {
         Map<String,Object> resMap = new HashMap<String,Object>();
         String msg = "";
@@ -763,6 +823,7 @@ public class SecurityFilter implements Filter {
         return resMap;
     }    
 
+    /** Management API: reads one auth config (cached). */
     public static Map<String, Object> queryDomainAuth(String domain, String port) {
         Map<String,Object> resMap = new HashMap<String,Object>();
         String msg = "";
@@ -791,10 +852,8 @@ public class SecurityFilter implements Filter {
     }    
 
     /**
-     * Set the account-lockout policy for a domain:port Basic Auth setting.
-     * maxAttempts = how many consecutive wrong passwords are allowed before
-     * the account is locked; lockMinutes = how long the lock lasts before the
-     * account auto-unlocks.
+     * Management API: sets the lock policy (max failed attempts + lock window
+     * in minutes) for a domain:port — applies to new user rows.
      */
     public static Map<String, Object> setAuthLockPolicy(String domain, String port, int maxAttempts, int lockMinutes) {
         Map<String, Object> resMap = new HashMap<String, Object>();
@@ -850,10 +909,7 @@ public class SecurityFilter implements Filter {
         }
     }
 
-    /**
-     * Manually unlock a domain auth user: clears failed_attempts and
-     * locked_until immediately (no need to wait for the auto-unlock time).
-     */
+    /** Management API: manually unlocks a locked user (resets attempt counter). */
     public static Map<String, Object> unlockAuthUser(String domain, String port, String username) {
         Map<String, Object> resMap = new HashMap<String, Object>();
         if (CommonTools.isBlank(domain)) {
@@ -895,9 +951,10 @@ public class SecurityFilter implements Filter {
             params.put("updated_at", new Clock().getSqlTimestamp());
             cde = new CacheDriverExecutor(conn);
             cde.execute(sql, params);
-            Integer cacheSeconds = config.getInteger("SecurityFilter.cacheSeconds", 60);
+            // D1 fix: Cache.set(key, null, ...) is a no-op; use Cache.remove so
+            // a freshly unlocked account is re-checked against the DB.
             String cacheKey = String.format("%s:%s.%s", domain, port, username);
-            Cache.set(cacheKey, null, cacheSeconds);
+            Cache.remove(cacheKey);
             resMap.put("code", 1);
             resMap.put("msg", String.format("DomainAuthUser %s:%s.%s unlocked.", domain, port, username));
             return resMap;
@@ -910,6 +967,7 @@ public class SecurityFilter implements Filter {
         }
     }
 
+    /** Whether auth is enabled for the domain:port (fallback to {@code 0:0}). */
     private static boolean checkDomainAuthEnable(String domain, String port) throws Exception {
         CacheDriverExecutor cde = null;
         String sql = "SELECT * FROM domain_auth WHERE domain = :domain AND port = :port AND deleted = :deleted";
@@ -931,6 +989,7 @@ public class SecurityFilter implements Filter {
         }
     }
 
+    /** Sends an HTTP error without leaking stack traces. */
     private void safeSendError(HttpServletResponse response, int code, String msg) throws IOException {
         if (!response.isCommitted()) {
             boolean errorRedirectEnable = config.getBoolean("errorRedirectEnable", false);
@@ -956,10 +1015,12 @@ public class SecurityFilter implements Filter {
     }
     
  	// Called once during server startup (TomcatServer config load); no concurrent writes.
+ 	/** Applies the {@code SecurityFilter} configuration block at startup. */
  	public static void setParams(final Map params) {
-		config.putAllAndReturnSlef(params);
+		config.putAllAndReturnSelf(params);
 	}   
 
+    /** Writes {@code code=1 + msg} into a result map on a management-API error. */
     private static void logError(Map<String, Object> resMap, Exception e) {
         LOG.error(e.getMessage(), e);
         resMap.put("code", -1);

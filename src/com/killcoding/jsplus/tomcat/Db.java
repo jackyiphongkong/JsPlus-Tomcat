@@ -37,6 +37,7 @@ import com.killcoding.datasource.CacheDriverExecutor;
  */
 public final class Db {
 
+    /** Utility class: no instances allowed. */
     private Db() {
     }
 

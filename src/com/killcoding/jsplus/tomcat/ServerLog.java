@@ -49,22 +49,59 @@ import com.killcoding.tool.FileTools;
 
 import jakarta.servlet.http.HttpServletRequest;
 
+/**
+ * Server-side web access logging with buffered, batched CSV persistence.
+ * <p>
+ * Request lines are appended to a static {@link CacheArray} shared by all
+ * request threads; a background filter thread drains the buffer on a timer and
+ * writes CSV files under the configured folder, rotating by size
+ * ({@code MaxBackupIndex}) and pruning by age ({@code ArchiveDays}). Processed
+ * items are swept from the buffer after each flush to keep memory bounded under
+ * heavy write load.
+ */
 public class ServerLog {
 
     private static CacheArray webLogCacheArray = null;
 
     private static ConfigProperties config = null;
 
+    /** Static utility class: instances are not used. */
     public ServerLog() {
         super();
     }
 
+    /**
+     * Applies the {@code ServerLog} configuration block once during startup.
+     *
+     * @param params the {@code ServerLog} configuration map
+     *               (Enable / Type / Folder / MaxFileSize / ArchiveDays / ...)
+     */
     // Called once during server startup (TomcatServer config load); no concurrent writes.
     public static void setParams(Map params) {
         config = new ConfigProperties();
-        config.putAllAndReturnSlef(params);
+        config.putAllAndReturnSelf(params);
     }
 
+    /**
+     * Records one request line into the web-log buffer.
+     * <p>
+     * Honours the {@code Enable} flag, the {@code Type} allow-list and the
+     * {@code Allowed}/{@code Ignored} URI filters. The formatted CSV line is
+     * queued in the shared {@link CacheArray}; the filter thread writes it to
+     * disk on the next timer tick.
+     *
+     * @param domain      request host name
+     * @param port        request port
+     * @param uri         request URI (path)
+     * @param type        HTTP method / log type, trimmed and uppercased
+     * @param seq         sequence number
+     * @param qs          raw query string
+     * @param headers     request headers (map) or any object
+     * @param params      request parameters (map, array or any object)
+     * @param remoteAddr  client remote address
+     * @return {@code true} if the line was queued for writing, {@code false} if
+     *         web logging is disabled or the line was filtered out
+     */
     public synchronized static boolean writeWebLog(String domain, String port, String uri, String type, long seq,
             String qs, Object headers,
             Object params,String remoteAddr) {
@@ -108,6 +145,8 @@ public class ServerLog {
             webLogCacheArray = new CacheArray();
 
             long logTimer = config.getLong("LogTimer", 1000L);
+            // Batch writer: concatenates drained lines, appends/rotates the CSV
+            // file and prunes old archives on every timer tick.
             webLogCacheArray.filter(new CacheArrayFilter(0L, logTimer) {
                 @Override
                 public void executeBatch(Integer index, List batch) {
@@ -184,12 +223,22 @@ public class ServerLog {
         return true;
     }
 
+    /** Whether the message passes the configured Allowed/Ignored regex filters. */
     private static boolean checkUriAvailable(ConfigProperties configProperties, String uri) {
         List<String> allowed = configProperties.getArray("Allowed");
         List<String> ignored = configProperties.getArray("Ignored");
         return checkUriAvailable(uri, allowed, ignored);
     }
 
+    /**
+     * Core URI filter: allowed when it matches any {@code allowed} regex and no
+     * {@code ignored} regex; skipped when neither list is configured.
+     *
+     * @param msg    the formatted CSV line to test
+     * @param allowed regex list that must match (empty/null = allow all)
+     * @param ignored regex list that must not match (empty/null = ignore none)
+     * @return {@code true} when the line may be written
+     */
     private static boolean checkUriAvailable(String msg, List<String> allowed, List<String> ignored) {
         boolean matchedAllowed = true;
         boolean matchedIgnored = false;
@@ -221,6 +270,10 @@ public class ServerLog {
         return b;
     }
 
+    /**
+     * Rotates the current log file: moves it to {@code prefix.<logIndex>.csv}
+     * and starts a fresh file with the header and the current batch.
+     */
     private static void backupLog(File logFolder, File logFile, String logFileNamePrefix, int logIndex, String header,
             String msg) throws Exception {
         String backupLogFileName = String.format("%s/%s.%s.csv", logFolder.getAbsolutePath(), logFileNamePrefix,
@@ -231,6 +284,10 @@ public class ServerLog {
         FileTools.write(logFile, String.format("%s%s", header, msg), false);
     }
 
+    /**
+     * Finds the first free backup slot ({@code prefix.<i>.csv}) up to
+     * {@code MaxBackupIndex}; returns {@code 0} when all slots are taken.
+     */
     private static int getLogFileIndex(ConfigProperties configProperties, File folder, String prefix, String suffix) {
         Integer maxBackupIndex = configProperties.getInteger("MaxBackupIndex", 10);
         for (int i = 1; i <= maxBackupIndex; i++) {
@@ -242,6 +299,7 @@ public class ServerLog {
         return 0;
     }
 
+    /** Deletes log files older than {@code archiveDays} days (0 or negative = keep all). */
     private static void archiveLog(int archiveDays, File sqlLogFolder) {
         if (archiveDays > 0) {
             try {
@@ -253,6 +311,10 @@ public class ServerLog {
         }
     }
 
+    /**
+     * Serializes a parameter object into a single line, truncating each value
+     * to {@code paramMaxLength} characters and CSV-escaping the result.
+     */
     private static String handleParams(int paramMaxLength, Object params) {
 
         if (params == null)
@@ -289,10 +351,12 @@ public class ServerLog {
         return replaceToSigleLine(paramSbf.toString());
     }
 
+    /** Escapes the message so it stays on one CSV line (quotes/newlines). */
     private static String replaceToSigleLine(String msg) {
         return CodeEscape.escapeToSingleLineForCsv(msg);
     }
 
+    /** Removes writable {@code .csv} files in the directory modified before the cutoff. */
     private static void deleteFilesOlderThan(File directory, long archiveDaysMs) throws IOException {
         if (directory.isDirectory()) {
             File[] files = directory.listFiles();
@@ -315,10 +379,12 @@ public class ServerLog {
         }
     }
 
+    /** Returns the active {@code ServerLog} configuration. */
     public static ConfigProperties getParams() {
         return config;
     }
 
+    /** Copies all request headers into an ordered map keyed by header name. */
     public static Map<String, String> getHeaders(HttpServletRequest request) {
         Map<String, String> headers = new IndexMap<String, String>();
         // headers.put("RequestRemoteAddr", request.getRemoteAddr());
