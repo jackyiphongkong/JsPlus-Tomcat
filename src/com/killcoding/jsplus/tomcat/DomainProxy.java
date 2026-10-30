@@ -985,6 +985,14 @@ public class DomainProxy implements Filter {
     // cannot both pass the "does it exist" check and write duplicate rows.
 	/** Inserts a mapping row; returns {@code false} when the row already exists. */
     private static synchronized boolean createDomainMappingParam(String domain, String port, String uri, Map<String, Object> domainParams) throws Exception {
+		// B21 fix: validate at the persistence layer too, so any direct caller
+		// (test, future refactor) fails fast with a clear message instead of
+		// NPE-ing on .toLowerCase() or Json.format(null). The public
+		// setDomainMapping already checks these; private methods must be
+		// self-protecting.
+		if (CommonTools.isBlank(domain)) throw new IllegalArgumentException("domain is required");
+		if (CommonTools.isBlank(port)) throw new IllegalArgumentException("port is required");
+		if (domainParams == null) throw new IllegalArgumentException("domainParams is required");
 		Map<String,Object> domainMappingParam = getDomainMappingParam(domain, port, uri);
 		
 		if(domainMappingParam != null) throw new Exception(String.format("The domain params %s:%s%s already exists.", domain, port, uriDisplay(uri))); 
@@ -1015,6 +1023,10 @@ public class DomainProxy implements Filter {
     // C12 fix: serialise create/update (see createDomainMappingParam).
 	/** Updates an existing mapping row; returns {@code false} when absent. */
     private static synchronized boolean updateDomainMappingParam(String domain, String port, String uri, Map<String, Object> domainParams) throws Exception {
+		// B21 fix: see createDomainMappingParam.
+		if (CommonTools.isBlank(domain)) throw new IllegalArgumentException("domain is required");
+		if (CommonTools.isBlank(port)) throw new IllegalArgumentException("port is required");
+		if (domainParams == null) throw new IllegalArgumentException("domainParams is required");
 		Map<String,Object> domainMappingParam = getDomainMappingParam(domain, port, uri);
 		
 		if(domainMappingParam == null) throw new Exception(String.format("The domain params %s:%s%s does not exist.", domain, port, uriDisplay(uri)));

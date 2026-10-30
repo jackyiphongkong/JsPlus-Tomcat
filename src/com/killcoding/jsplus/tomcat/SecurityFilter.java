@@ -641,11 +641,31 @@ public class SecurityFilter implements Filter {
     public synchronized static Map<String,Object> createDomainAuth(String domain, String port, Boolean authEnable) {
         Map<String,Object> resMap = new HashMap<String,Object>();
 
+        // B22 fix: validate before touching the DB. Previously a null
+        // domain/port NPE'd at .toLowerCase() (swallowed into "Failed to create
+        // DomainAuth."), and a null authEnable wrote SQL NULL into
+        // auth_enable — which later crashed checkDomainAuthEnable (B20).
+        if (CommonTools.isBlank(domain)) {
+            resMap.put("code", 0);
+            resMap.put("msg", "The param 'domain' is required.");
+            return resMap;
+        }
+        if (CommonTools.isBlank(port)) {
+            resMap.put("code", 0);
+            resMap.put("msg", "The param 'port' is required.");
+            return resMap;
+        }
+        if (authEnable == null) {
+            resMap.put("code", 0);
+            resMap.put("msg", "The param 'authEnable' is required.");
+            return resMap;
+        }
+        domain = domain.trim().toLowerCase();
+        port = port.trim().toLowerCase();
+
         String sql = "INSERT INTO domain_auth (id,domain,port,auth_enable,encrypt_mode,encrypt_key,created_at,updated_at,deleted_at,deleted) VALUES (:id,:domain,:port,:auth_enable,:encrypt_mode,:encrypt_key,:created_at,:updated_at,:deleted_at,:deleted)";
         CacheDriverExecutor cde = null;
         try {
-            domain = domain.toLowerCase();
-            port = port.toLowerCase();      
             if (getDomainAuth(domain, port) != null) {
                 resMap.put("code",0);
                 resMap.put("msg",String.format("The %s:%s already exists.", domain, port));
@@ -687,12 +707,31 @@ public class SecurityFilter implements Filter {
     /** Management API: toggles the auth switch for a domain:port. */
     public static Map<String,Object> updateDomainAuth(String domain, String port, Boolean authEnable) {
         Map<String,Object> resMap = new HashMap<String,Object>();
+
+        // B22 fix: see createDomainAuth — null/blank inputs must return a
+        // precise validation error instead of NPE-ing or writing SQL NULL.
+        if (CommonTools.isBlank(domain)) {
+            resMap.put("code", 0);
+            resMap.put("msg", "The param 'domain' is required.");
+            return resMap;
+        }
+        if (CommonTools.isBlank(port)) {
+            resMap.put("code", 0);
+            resMap.put("msg", "The param 'port' is required.");
+            return resMap;
+        }
+        if (authEnable == null) {
+            resMap.put("code", 0);
+            resMap.put("msg", "The param 'authEnable' is required.");
+            return resMap;
+        }
+        domain = domain.trim().toLowerCase();
+        port = port.trim().toLowerCase();
+
         CacheDriverExecutor cde = null;
         String sql = "UPDATE domain_auth SET auth_enable = :auth_enable,updated_at = :updated_at WHERE domain = :domain AND port = :port AND deleted = :deleted";
 
         try {
-            domain = domain.toLowerCase();
-            port = port.toLowerCase();
             if (getDomainAuth(domain, port) == null) {
                 resMap.put("code",0);
                 resMap.put("msg",String.format("The %s:%s does not exist.", domain, port));
@@ -967,6 +1006,44 @@ public class SecurityFilter implements Filter {
         }
     }
 
+    /**
+     * Reads a boolean column from a result row, tolerant of:
+     * <ul>
+     *   <li>the column being SQL NULL (schema declares {@code auth_enable BOOLEAN}
+     *       without a DEFAULT, so legacy rows may carry NULL);</li>
+     *   <li>column-label case differences (Core's {@code COLUMN_NAME_CASE_MODE}
+     *       can be set to UPPER/RAW at runtime, not just the default LOWER);</li>
+     *   <li>value being {@link Boolean}, {@link Number} (1/0) or a String
+     *       ("true"/"false"/"1"/"0").</li>
+     * </ul>
+     * Without this, {@code (Boolean) row.get("auth_enable")} auto-unboxes a
+     * null and throws NPE inside the request filter path.
+     *
+     * @param row       result row (may be null)
+     * @param name      column name (lower-case, as used by the default LOWER mode)
+     * @param fallback  value returned when the column is absent or NULL
+     * @return the parsed boolean value, or {@code fallback} when unknown
+     */
+    private static boolean getBooleanCol(Map<String, Object> row, String name, boolean fallback) {
+        if (row == null) return fallback;
+        Object v = row.get(name);
+        if (v == null) {
+            // Case-insensitive fallback (mode=UPPER / RAW).
+            for (Map.Entry<String, Object> e : row.entrySet()) {
+                if (e.getKey() != null && e.getKey().equalsIgnoreCase(name)) {
+                    v = e.getValue();
+                    break;
+                }
+            }
+        }
+        if (v == null) return fallback;
+        if (v instanceof Boolean) return (Boolean) v;
+        if (v instanceof Number) return ((Number) v).intValue() != 0;
+        String s2 = String.valueOf(v).trim();
+        if ("1".equals(s2) || "true".equalsIgnoreCase(s2) || "yes".equalsIgnoreCase(s2)) return true;
+        if ("0".equals(s2) || "false".equalsIgnoreCase(s2) || "no".equalsIgnoreCase(s2)) return false;
+        return fallback;
+    }
     /** Whether auth is enabled for the domain:port (fallback to {@code 0:0}). */
     private static boolean checkDomainAuthEnable(String domain, String port) throws Exception {
         CacheDriverExecutor cde = null;
@@ -983,7 +1060,10 @@ public class SecurityFilter implements Filter {
             if (result == null)
                 return false;
 
-            return (Boolean) result.get("auth_enable");
+            // B20 fix: a legacy row with auth_enable = SQL NULL used to throw
+            // NPE here (auto-unboxing a null Boolean). Treat NULL/unknown as
+            // "auth disabled" rather than crashing the request path.
+            return getBooleanCol(result, "auth_enable", false);
         } finally {
             Db.closeQuietly(cde);
         }
