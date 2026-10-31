@@ -278,7 +278,7 @@ try {
     md += "| Suite | Passed | Failed |\n";
     md += "| --- | --- | --- |\n";
     for (var m = 0; m < suiteResults.length; m++) {
-        md += "| " + suiteResults[m].title + " | " + suiteResults[m].pass + " | " + suiteResults[m].fail + " |\n";
+        md += "| [" + suiteResults[m].title + "](" + suiteResults[m].title + "-Report.html) | " + suiteResults[m].pass + " | " + suiteResults[m].fail + " |\n";
     }
     var reportPath = basePath + "../docs/latest/report/TestAll-Report.md";
     var report = new DiskFile(reportPath);
@@ -316,7 +316,7 @@ try {
     }
     html += "<table>\n<tr><th>Suite</th><th>Passed</th><th>Failed</th></tr>\n";
     for (var m2 = 0; m2 < suiteResults.length; m2++) {
-        html += "<tr><td>" + suiteResults[m2].title + "</td><td>" + suiteResults[m2].pass + "</td><td>" + suiteResults[m2].fail + "</td></tr>\n";
+        html += "<tr><td><a href='" + suiteResults[m2].title + "-Report.html'>" + suiteResults[m2].title + "</a></td><td>" + suiteResults[m2].pass + "</td><td>" + suiteResults[m2].fail + "</td></tr>\n";
     }
     html += "</table>\n</body>\n</html>\n";
     var htmlPath = basePath + "../docs/latest/report/TestAll-Report.html";
