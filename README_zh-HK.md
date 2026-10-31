@@ -753,7 +753,7 @@ shell/bat 啟動器會將命令列選項傳遞至 JsPlus 主類別（`com.killco
 
 | 腳本 | 涵蓋範圍 |
 |---|---|
-| `TestBase.js` | 共用測試基礎（Java 繫結、`check`／`isOk`／`msg`、`callTomcat`、`runCmd`／`curlStatus`、`dbVerify` SQL 驗證、HTML／MD／CI 摘要報告寫入；報告同步寫入 `docs/latest/report/` 及舊路徑 `test_reports/`） |
+| `TestBase.js` | 共用測試基礎（Java 繫結、`check`／`isOk`／`msg`、`callTomcat`、`runCmd`／`curlStatus`、`dbVerify` SQL 驗證、HTML／MD／CI 摘要報告寫入；報告寫入 `docs/latest/report/`（唯一正式位置）） |
 | `TestAll.js` | 統一入口——依序執行全部八套測試，並輸出總計通過／失敗摘要 |
 | `TestDomainProxy.js` | 21 個案例——網域對應 CRUD ＋ 透過 `curl` 進行即時反向代理請求驗證（含 `mode=internal` 分派及組合驗證） |
 | `TestSecurityFilter.js` | 16 個案例——Basic Auth CRUD（`domain_auth`／`domain_auth_user`）＋ 透過 `curl` 進行即時 `401`／`200` 驗證 |
@@ -817,7 +817,7 @@ Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestServerLog.js');
 （PASS 綠色／FAIL 紅色，包含 Case Id／Test Objective／Result／Detail）寫入
 `docs/latest/report/`——每個套件一對 `Test<Suite>-Report.html`／`.md`，
 另有彙總的 `TestAll-Report.html`／`.md` 及 `TestAll-CI-Summary.md`。
-相同檔案同步鏡像至舊路徑 `test_reports/`，供舊工具使用。
+此為唯一正式位置；舊路徑 `test_reports/` 鏡像已移除。
 
 `TestAll.bat`／`TestAll.sh` 的 Step 3 其後會啟動獨立 Tomcat 並執行內建的
 壓力測試（`test/LoadTest.js`，透過 JsPlus 主控台執行的純 JS 移植版，無需
@@ -866,7 +866,7 @@ API 使用相同的資料存取路徑）。每個套件結尾均有清理案例�
 7. 執行 `test/TestAll.sh`——與本地完全相同的一鍵流程。
 8. 將 `TestAll-CI-Summary.md` 發佈至該次執行的 Job Summary（`if: always()`）。
 9. 上傳 `test-reports` 產物——`docs/latest/report/`、`docs/reports/`、
-   `docs/latest/api/`、`docs/apis/*.jar`、舊路徑 `test_reports/`、`test/*.log`、
+   `docs/latest/api/`、`docs/apis/*.jar`、`test/*.log`、
    `logs/`、`build-verify.log` 及建置出的 JAR（`if: always()`、
    `if-no-files-found: warn`）。
 

@@ -258,17 +258,14 @@ if (totalFail > 0) {
 }
 
 // Aggregate markdown summary into docs/latest/report/TestAll-Report.md
-// (JsPlus-Core docs layout) plus a legacy copy under test_reports/.
+// (JsPlus-Core docs layout — single canonical location, no legacy mirror).
 try {
     var File = Java.type("java.io.File");
     var primaryDir = new File(basePath + "../docs/latest/report");
     if (!primaryDir.exists()) {
         primaryDir.mkdirs();
     }
-    var legacyDir = new File(basePath + "../test_reports");
-    if (!legacyDir.exists()) {
-        legacyDir.mkdirs();
-    }
+
     var md = "# JsPlus-Tomcat TestAll Report\n\n";
     md += "Generated: " + new Date().toString() + "\n\n";
     md += "**" + totalPass + " passed / " + totalFail + " failed**\n\n";
@@ -286,13 +283,10 @@ try {
     var reportPath = basePath + "../docs/latest/report/TestAll-Report.md";
     var report = new DiskFile(reportPath);
     report.write(md, "UTF-8");
-    // Legacy copy (kept for existing CI artifact paths / local shortcuts).
-    var legacyMd = new DiskFile(basePath + "../test_reports/TestAll-Report.md");
-    legacyMd.write(md, "UTF-8");
+
     print("Markdown report written to " + reportPath);
 
-    // Aggregate HTML summary into docs/latest/report/TestAll-Report.html
-    // (plus the legacy test_reports/ copy).
+    // Aggregate HTML summary into docs/latest/report/TestAll-Report.html.
     var html = "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n<title>JsPlus-Tomcat TestAll Report</title>\n"
         + "<style>\n"
         + "  body { font-family: Consolas, 'Courier New', monospace; background: #f5f6f8; margin: 24px; }\n"
@@ -328,8 +322,7 @@ try {
     var htmlPath = basePath + "../docs/latest/report/TestAll-Report.html";
     var report2 = new DiskFile(htmlPath);
     report2.write(html, "UTF-8");
-    var legacyHtml = new DiskFile(basePath + "../test_reports/TestAll-Report.html");
-    legacyHtml.write(html, "UTF-8");
+
     print("HTML report written to " + htmlPath);
 
     // CI summary (from TestBase.writeCiSummary) — compact Markdown that the

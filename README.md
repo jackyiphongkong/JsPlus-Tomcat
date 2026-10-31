@@ -778,7 +778,7 @@ launcher scripts needed:
 
 | Script | Coverage |
 |---|---|
-| `TestBase.js` | Shared harness (Java bindings, `check`/`isOk`/`msg`, `callTomcat`, `runCmd`/`curlStatus`, `dbVerify` SQL verification, HTML/MD/CI-summary report writers; reports are mirrored to `docs/latest/report/` and the legacy `test_reports/`) |
+| `TestBase.js` | Shared harness (Java bindings, `check`/`isOk`/`msg`, `callTomcat`, `runCmd`/`curlStatus`, `dbVerify` SQL verification, HTML/MD/CI-summary report writers; reports are written to `docs/latest/report/` (single canonical location)) |
 | `TestAll.js` | Unified entry — runs all eight suites in sequence and prints an aggregate pass/fail summary |
 | `TestDomainProxy.js` | 21 cases — domain mapping CRUD + live reverse-proxy request via `curl` (incl. `mode=internal` dispatch + validation)
 | `TestSecurityFilter.js` | 16 cases — basic-auth CRUD (`domain_auth` / `domain_auth_user`) + live `401`/`200` checks via `curl` |
@@ -844,8 +844,8 @@ Each check prints `[PASS]` / `[FAIL]`, and a color-coded HTML report
 (green PASS / red FAIL, with Case Id / Test Objective / Result / Detail) is
 written to `docs/latest/report/` — one `Test<Suite>-Report.html` / `.md` pair per
 suite, plus an aggregate `TestAll-Report.html` / `.md` and
-`TestAll-CI-Summary.md`. The same files are mirrored to the legacy
-`test_reports/` directory for older tooling.
+`TestAll-CI-Summary.md`. This is the single canonical location; the legacy
+`test_reports/` mirror has been removed.
 
 Step 3 of `TestAll.bat` / `TestAll.sh` then starts a standalone Tomcat and runs
 the built-in load test (`test/LoadTest.js`, a pure-JS port executed through the
@@ -904,7 +904,7 @@ against `main` / `master`:
 7. Run `test/TestAll.sh` — the same one-command flow as locally.
 8. Publish `TestAll-CI-Summary.md` to the run's job summary (`if: always()`).
 9. Upload `test-reports` — `docs/latest/report/`, `docs/reports/`,
-   `docs/latest/api/`, `docs/apis/*.jar`, the legacy `test_reports/`, `test/*.log`,
+   `docs/latest/api/`, `docs/apis/*.jar`, `test/*.log`,
    `logs/`, `build-verify.log` and the built JAR (`if: always()`,
    `if-no-files-found: warn`).
 

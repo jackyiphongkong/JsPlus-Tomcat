@@ -280,33 +280,22 @@ function configSnapshot() {
     return lines;
 }
 
-// Writes one report file into both report locations (JsPlus-Core docs layout):
-//   1) docs/latest/report/ — the standard browsable newest-reports site, and
-//      the source folder that TestAll archives as docs/reports/<version>.jar;
-//   2) test_reports/       — the legacy in-tree location, kept so existing
-//      CI artifact paths and local shortcuts keep working.
-// Returns the primary path written (docs/latest/report/...).
+// Writes one report file into docs/latest/report/ (the JsPlus-Core docs
+// layout). This is the single canonical location: browsable newest-reports
+// site, source folder that TestAll archives as docs/reports/<version>.jar,
+// and the path the CI workflow uploads. The legacy test_reports/ mirror was
+// removed — no in-tree tooling reads it any more.
+// Returns the path written.
 function writeReportFile(reportName, content) {
     var File = Java.type("java.io.File");
     var basePath = System.getProperty("JS_PLUS_PATH");
     var primaryPath = basePath + "../docs/latest/report/" + reportName;
-    var legacyPath = basePath + "../test_reports/" + reportName;
     var primaryDir = new File(basePath + "../docs/latest/report");
     if (!primaryDir.exists()) {
         primaryDir.mkdirs();
     }
-    var legacyDir = new File(basePath + "../test_reports");
-    if (!legacyDir.exists()) {
-        legacyDir.mkdirs();
-    }
     var report = new DiskFile(primaryPath);
     report.write(content, "UTF-8");
-    try {
-        var legacy = new DiskFile(legacyPath);
-        legacy.write(content, "UTF-8");
-    } catch (e) {
-        print("[WARN] Could not write legacy report copy: " + e);
-    }
     return primaryPath;
 }
 

@@ -396,6 +396,125 @@ check({
 
 
 // ---------------------------------------------------------------------------
+// preRequest hook (DomainMapping.preRequest) — short-circuit before upstream.
+// sample.js's preRequest() stubs /health to {status:200, body:'ok'} so the
+// request must never reach the upstream target (even when the target is
+// unreachable, /health must return 200 'ok' immediately).
+// We use 8443 (HTTPS, already listened by Tomcat) because the mapping's port
+// is request.getLocalPort() — a request arriving on 8081 cannot connect.
+// ---------------------------------------------------------------------------
+
+// Case C22 — create the 127.0.0.1:8443 mapping with scriptFile=sample.js so
+// preRequest() is loaded. Target is set to zh.wikipedia.org (unreachable from
+// CI at times) — this is deliberate: if preRequest short-circuits /health, the
+// target never matters.
+var preMapParams = new HashMap();
+preMapParams.put("target", "https://zh.wikipedia.org");
+preMapParams.put("scriptEnable", true);
+preMapParams.put("scriptFile", "sample.js");
+r = callTomcat(function(){ return tomcat.setDomainMapping("127.0.0.1", "8443", preMapParams); });
+check({
+    name: "setDomainMapping 127.0.0.1:8443 scriptFile=sample.js (preRequest hook)",
+    ok: isOk(r),
+    detail: msg(r) + dbVerify(function(){ return "SELECT * FROM domain_mapping_param WHERE domain='127.0.0.1' AND port='8443' AND deleted=FALSE"; }),
+    objective: "Create a 127.0.0.1:8443 mapping with scriptFile=sample.js so the preRequest() hook is loaded; target points at zh.wikipedia.org to prove the stub below does not depend on upstream reachability",
+    objectiveZh: "建立 127.0.0.1:8443 對應並載入 sample.js 之 preRequest() 掛鉤；上游指向 zh.wikipedia.org 以證明短攔不依賴上游可達性",
+    command: "tomcat.setDomainMapping(\"127.0.0.1\", \"8443\", {target: \"https://zh.wikipedia.org\", scriptEnable: true, scriptFile: \"sample.js\"})"
+});
+
+// Case C23 — curl GET https://127.0.0.1:8443/health must return 200 with body
+// exactly 'ok'. Because preRequest short-circuits /health, the upstream
+// zh.wikipedia.org is never contacted — so this must pass even when the
+// external proxy path (port 8080) is flaky / 502.
+var healthStatus = -1;
+var healthBody = "";
+var healthOk = false;
+try {
+    var healthHeader = runCmd(["curl", "-k", "-s", "-o", NULL_DEVICE, "-D", "-", "https://127.0.0.1:8443/health"]);
+    var hp = healthHeader.split("\n")[0].split(" ");
+    healthStatus = hp.length >= 2 ? parseInt(hp[1]) : -1;
+    healthBody = String(runCmd(["curl", "-k", "-s", "https://127.0.0.1:8443/health"])).trim();
+    healthOk = (healthStatus === 200) && (healthBody === "ok");
+} catch (e) {
+    print("[WARN] curl /health failed: " + e);
+}
+check({
+    name: "curl GET https://127.0.0.1:8443/health (preRequest short-circuit, stub 200 'ok')",
+    ok: healthOk,
+    detail: "status=" + healthStatus + " body='" + healthBody + "'" + dbVerify(function(){ return "SELECT * FROM domain_mapping_param WHERE domain='127.0.0.1' AND port='8443' AND deleted=FALSE"; }),
+    objective: "Verify DomainMapping.preRequest() short-circuits GET /health with {status:200, body:'ok'} without contacting the upstream target",
+    objectiveZh: "驗證 DomainMapping.preRequest() 對 GET /health 短攔回傳 {status:200, body:'ok'}，且不會連接上游",
+    command: "curl -k -s -o NUL -D - https://127.0.0.1:8443/health && curl -k -s https://127.0.0.1:8443/health"
+});
+
+// Case C24 — curl GET /prime. preRequest() writes the {status:200,
+// body:'CACHED'} entry into the Java Cache and returns 200 'PRIMED' directly
+// (no upstream call). We assert status=200 body='PRIMED' to confirm the JS
+// side ran and the cache write happened before we check the cache hit.
+var primeStatus = -1;
+var primeBody = "";
+var primeOk = false;
+try {
+    var primeHeader = runCmd(["curl", "-k", "-s", "-o", NULL_DEVICE, "-D", "-", "https://127.0.0.1:8443/prime"]);
+    var pp = primeHeader.split("\n")[0].split(" ");
+    primeStatus = pp.length >= 2 ? parseInt(pp[1]) : -1;
+    primeBody = String(runCmd(["curl", "-k", "-s", "https://127.0.0.1:8443/prime"])).trim();
+    primeOk = (primeStatus === 200) && (primeBody === "PRIMED");
+} catch (e) {
+    print("[WARN] curl /prime failed: " + e);
+}
+check({
+    name: "curl GET https://127.0.0.1:8443/prime (preRequest writes cache, short-circuits 200 PRIMED)",
+    ok: primeOk,
+    detail: "status=" + primeStatus + " body='" + primeBody + "'",
+    objective: "Verify preRequest() runs on /prime, writes the cache entry, and short-circuits with 200 'PRIMED' (no upstream call)",
+    objectiveZh: "驗證 preRequest() 於 /prime 執行、寫入快取，並短攔回傳 200 'PRIMED'（不連接上游）",
+    command: "curl -k -s -o NUL -D - https://127.0.0.1:8443/prime && curl -k -s https://127.0.0.1:8443/prime"
+});
+
+// Case C25 — curl GET /cached. preRequest() must find the primed entry and
+// short-circuit with {status:200, body:'CACHED'}. Crucially, this must NOT
+// proxy upstream — so even though zh.wikipedia.org is unreachable, /cached
+// returns 200 'CACHED'.
+// NOTE: sleep 2s to let the IpAttackDefense rate-limiter window cool down —
+// the preceding /health (x2) and /prime (x2) curls already consumed the burst
+// budget, and without the pause /cached would come back 429 before reaching
+// DomainProxy.
+java.lang.Thread.sleep(2000);
+var cachedStatus = -1;
+var cachedBody = "";
+var cachedOk = false;
+try {
+    var cachedHeader = runCmd(["curl", "-k", "-s", "-o", NULL_DEVICE, "-D", "-", "https://127.0.0.1:8443/cached"]);
+    var cp = cachedHeader.split("\n")[0].split(" ");
+    cachedStatus = cp.length >= 2 ? parseInt(cp[1]) : -1;
+    cachedBody = String(runCmd(["curl", "-k", "-s", "https://127.0.0.1:8443/cached"])).trim();
+    cachedOk = (cachedStatus === 200) && (cachedBody === "CACHED");
+} catch (e) {
+    print("[WARN] curl /cached failed: " + e);
+}
+check({
+    name: "curl GET https://127.0.0.1:8443/cached (preRequest cache-hit short-circuit)",
+    ok: cachedOk,
+    detail: "status=" + cachedStatus + " body='" + cachedBody + "'",
+    objective: "Verify preRequest() finds the primed cache entry and short-circuits with {status:200, body:'CACHED'} without contacting the upstream target",
+    objectiveZh: "驗證 preRequest() 命中預置快取並短攔回傳 {status:200, body:'CACHED'}，且不會連接上游",
+    command: "curl -k -s -o NUL -D - https://127.0.0.1:8443/cached && curl -k -s https://127.0.0.1:8443/cached"
+});
+
+// Case C26 — cleanup: remove the 8443 mapping created in C22.
+r = callTomcat(function(){ return tomcat.removeDomainMapping("127.0.0.1", "8443"); });
+check({
+    name: "removeDomainMapping 127.0.0.1:8443 (preRequest cleanup)",
+    ok: isOk(r),
+    detail: msg(r) + dbVerify(function(){ return "SELECT * FROM domain_mapping_param WHERE domain='127.0.0.1' AND port='8443' AND deleted=FALSE"; }),
+    objective: "Remove the 8443 mapping created for the preRequest hook test and verify no residual rows",
+    objectiveZh: "移除本次測試建立的 8443 對應，並驗證無殘留記錄",
+    command: "tomcat.removeDomainMapping(\"127.0.0.1\", \"8443\")"
+});
+
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 writeReport();

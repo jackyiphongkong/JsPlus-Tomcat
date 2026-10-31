@@ -380,7 +380,10 @@ public class DomainProxy implements Filter {
 				return;
 			}
 			if ("Forward".equalsIgnoreCase(mode)) {
-				forwardRequest(domainCp, request, response, builder, domain, port);
+				// preRequest hook: cache / stub short-circuit before any upstream call.
+				if (!tryPreRequestShortCircuit(domainCp, request, response, domain, port)) {
+					forwardRequest(domainCp, request, response, builder, domain, port);
+				}
 			}
 			long spend = System.currentTimeMillis() - begin;
 			ServerLog.writeWebLog(domain, port, request.getRequestURI(), "response", System.currentTimeMillis(), request.getQueryString(), ServerLog.getHeaders(request), String.format("spend=%s;buferSize=%s;contentType=%s", Long.valueOf(spend), Integer.valueOf(response.getBufferSize()), response.getContentType()),request.getRemoteAddr());
@@ -419,6 +422,86 @@ public class DomainProxy implements Filter {
 		consoleParams.put("response", response);
 		consoleParams.put("proxy", this);
 		TomcatScriptConsole.put(consoleParams);
+	}
+
+	/**
+	 * Runs the optional {@code DomainMapping.preRequest()} hook on the way out to
+	 * the backend. The hook returns {@code null} to continue normal proxying, or
+	 * a {@code Map} ({@code {status:int, headers:{name:value}, body:string|byte[]}})
+	 * to short-circuit — the stub / cached response is written directly to the
+	 * client and the upstream HTTP call is skipped.
+	 *
+	 * @return {@code true} when the request was short-circuited (caller must
+	 *         skip {@code forwardRequest}); {@code false} to continue forwarding.
+	 */
+	private boolean tryPreRequestShortCircuit(ConfigProperties domainCp, HttpServletRequest request,
+			HttpServletResponse response, String domain, String port) throws Exception {
+		if (!domainCp.getBoolean("scriptEnable", true)) {
+			return false;
+		}
+		if (!domainCp.containsKey("scriptFile")) {
+			return false;
+		}
+		// Re-establish console context — applyDomainScript() -> getDomainParams()
+		// already freed() the console, so request/response context is gone.
+		Map<String, Object> hookParams = new HashMap<String, Object>();
+		hookParams.put("request", request);
+		hookParams.put("response", response);
+		hookParams.put("proxy", this);
+		TomcatScriptConsole.put(hookParams);
+
+		Object result = TomcatScriptConsole.getRequestPreHook(domainCp.getString("scriptFile", null));
+		if (result == null) {
+			return false;
+		}
+		Map<?, ?> resultMap;
+		if (TomcatScriptConsole.getEngineName().equalsIgnoreCase("graalvm.js")) {
+			Object unwrapped = ((org.graalvm.polyglot.Value) result).as(Object.class);
+			if (unwrapped == null) return false;
+			if (!(unwrapped instanceof Map)) {
+				log.warn("preRequest returned non-Map: {}", unwrapped.getClass());
+				return false;
+			}
+			resultMap = (Map<?, ?>) unwrapped;
+		} else {
+			if (!(result instanceof Map)) return false;
+			resultMap = (Map<?, ?>) result;
+		}
+
+		int status = 200;
+		Object statusObj = resultMap.get("status");
+		if (statusObj instanceof Number) {
+			status = ((Number) statusObj).intValue();
+		} else if (statusObj != null) {
+			try { status = Integer.parseInt(String.valueOf(statusObj)); } catch (Exception ignore) {}
+		}
+		response.setStatus(status);
+
+		Object headersObj = resultMap.get("headers");
+		if (headersObj instanceof Map) {
+			((Map<?, ?>) headersObj).forEach((k, v) -> {
+				if (k != null && v != null) {
+					response.setHeader(String.valueOf(k), String.valueOf(v));
+				}
+			});
+		}
+
+		Object bodyObj = resultMap.get("body");
+		if (bodyObj != null) {
+			byte[] bodyBytes;
+			if (bodyObj instanceof byte[]) {
+				bodyBytes = (byte[]) bodyObj;
+			} else {
+				bodyBytes = String.valueOf(bodyObj).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+			}
+			response.setContentLength(bodyBytes.length);
+			response.getOutputStream().write(bodyBytes);
+			response.getOutputStream().flush();
+		}
+		log.debug("preRequest short-circuited {} {} -> status={}, body={} bytes",
+				domain, request.getRequestURI(), status,
+				bodyObj == null ? 0 : (bodyObj instanceof byte[] ? ((byte[]) bodyObj).length : String.valueOf(bodyObj).length()));
+		return true;
 	}
 
 	private ConfigProperties resolveDomainConfig(HttpServletRequest request, HttpServletResponse response)

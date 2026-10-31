@@ -27,8 +27,28 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ant
 
-      - name: Build jsplus-tomcat.jar
+      - name: Build jsplus-tomcat.jar (includes javadoc)
         run: ant build
+
+      - name: Verify jar version matches version.properties
+        run: |
+          MAJOR=$(grep '^jr.major=' version.properties | cut -d= -f2)
+          MINOR=$(grep '^jr.minor=' version.properties | cut -d= -f2)
+          PATCH=$(grep '^jr.patch=' version.properties | cut -d= -f2)
+          JAR="LibHome/jsplus/default/jsplus-tomcat-${MAJOR}.${MINOR}.${PATCH}.jar"
+          if [ ! -s "$JAR" ]; then
+            echo "ERROR: expected JAR not found or empty: $JAR"
+            exit 1
+          fi
+          echo "Verified JAR: $JAR (matches version.properties ${MAJOR}.${MINOR}.${PATCH})"
+
+      - name: Verify javadoc site
+        run: |
+          # Each workflow step runs in its own shell, so re-read the version here.
+          VER=$(grep -E '^jr\.(major|minor|patch)=' version.properties | cut -d= -f2 | paste -sd.)
+          test -f "docs/latest/api/index.html" || { echo "ERROR: javadoc site missing (docs/latest/api/index.html)"; exit 1; }
+          test -s "docs/apis/${VER}.jar" || { echo "ERROR: docs/apis/${VER}.jar missing"; exit 1; }
+          echo "Verified javadoc: docs/latest/api + docs/apis/${VER}.jar"
 
       - name: Run TestAll.sh
         run: |
@@ -37,16 +57,30 @@ jobs:
         working-directory: test
 
       - name: Publish CI summary
+        if: always()
         run: |
-          if [ -f test_reports/TestAll-CI-Summary.md ]; then
-            cat test_reports/TestAll-CI-Summary.md >> "$GITHUB_STEP_SUMMARY"
-          fi
+          for f in docs/latest/report/TestAll-CI-Summary.md; do
+            if [ -f "$f" ]; then
+              cat "$f" >> "$GITHUB_STEP_SUMMARY"
+              break
+            fi
+          done
 
-      - name: Upload test reports
+      # Upload even when an earlier step failed: a failed run is exactly when
+      # the logs and partial reports are needed. if-no-files-found stays "warn"
+      # so this step never turns a failed run into a broken one.
+      - name: Upload test reports, logs and docs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-reports
           path: |
-            test_reports/
+            docs/latest/report/
+            docs/reports/
+            docs/latest/api/
+            docs/apis/*.jar
+            test/*.log
             logs/
-          if-no-files-found: error
+            build-verify.log
+            LibHome/jsplus/default/*.jar
+          if-no-files-found: warn

@@ -455,6 +455,37 @@ public class TomcatScriptConsole {
 
 
 
+	/**
+	 * Evaluates a domain script's {@code preRequest()} hook — called on the way
+	 * out to the backend, before any upstream HTTP request is sent. The script
+	 * returns {@code null} / {@code undefined} to continue normal proxying, or a
+	 * {@code Map} ({@code {status, headers:{...}, body}}) to short-circuit and
+	 * return a stub / cached response directly.
+	 *
+	 * @return the {@code DomainMapping.preRequest()} result, or {@code null}
+	 *         when the script is missing, rejected, or the hook returns null
+	 */
+	public static Object getRequestPreHook(String customScriptFile) throws Exception {
+		try {
+			if (!isSafeScriptFile(customScriptFile)) {
+				log.warn("Invalid scriptFile (path traversal rejected): {}", customScriptFile);
+				return null;
+			}
+			String scriptPath = String.format("%s/%s", getAppScriptPath(), customScriptFile);
+			File scrptFile = new File(scriptPath);
+			if (checkExists(scrptFile)) {
+				log.debug("Loaded: {}", scriptPath);
+				eval(scrptFile);
+				return evalScript("(function(){return DomainMapping.preRequest ? DomainMapping.preRequest() : null;})();");
+			} else {
+				log.warn("Missing: {}", scriptPath);
+				return null;
+			}
+		} finally {
+			freed();
+		}
+	}
+
 	/** C8: a scriptFile must be a bare relative file name inside the domain
 	 *  folder — no path separators, no "..", no absolute path, no drive letter. */
 	private static boolean isSafeScriptFile(String scriptFile) {

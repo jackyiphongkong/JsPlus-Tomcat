@@ -69,7 +69,7 @@ try {
     print("[WARN] could not reset ServerLog.webLogCacheArray: " + e);
 }
 
-var testFolder = basePath + "../test_reports/weblog_stress";
+var testFolder = basePath + "../test/weblog_stress";
 var dateStr = new SimpleDateFormat("yyyyMMdd").format(new JDate());
 var csvFile = testFolder + "/" + dateStr + ".csv";
 

@@ -23,6 +23,13 @@
 //   ../docs/latest/report/loadtest-result.json
 //   ../docs/latest/report/loadtest-dashboard.html
 //   (plus a legacy copy under ../test_reports/)
+//
+// The result JSON and the dashboard carry a "environment" block (before/after
+// the measured run): OS/arch, CPU cores and load, physical memory, JVM heap,
+// JDK build/version, JVM input arguments and host process count. QPS numbers
+// are only comparable between runs recorded on the same environment — a run on
+// a loaded machine (other JVMs, low free memory) reports a lower QPS for the
+// same code, so the metrics are archived with the run instead of guessed later.
 // ============================================================================
 
 // Self-signed test certificate:
@@ -49,6 +56,10 @@ var Thread       = Java.type("java.lang.Thread");
 var File         = Java.type("java.io.File");
 var DiskFile     = Java.type("com.killcoding.file.DiskFile");
 var ScriptConsole = Java.type("com.killcoding.jsplus.ScriptConsole");
+var Runtime      = Java.type("java.lang.Runtime");
+var ManagementFactory = Java.type("java.lang.management.ManagementFactory");
+var ClassT       = Java.type("java.lang.Class");
+var ProcessHandle = Java.type("java.lang.ProcessHandle");
 
 function envOr(name, def) {
     var v = System.getenv(name);
@@ -62,6 +73,120 @@ function esc(s) {
     return String(s).split("\\").join("\\\\").split('"').join('\\"').split("\n").join("\\n");
 }
 function pad2(n) { return n < 10 ? "0" + n : String(n); }
+function bytesToMb(b) { return Math.round(b / 1048576.0); }
+function pct(part, whole) { return whole <= 0 ? 0 : round1(part * 100.0 / whole); }
+
+/**
+ * Reads one optional metric from com.sun.management.OperatingSystemMXBean.
+ * The concrete implementation lives in com.sun.management.internal (not
+ * exported by jdk.management), so a call through the runtime class fails with
+ * IllegalAccessException — the method must be resolved on the exported
+ * interface class instead, then invoked on the bean.
+ */
+function osMetric(methodNames) {
+    var out = null;
+    try {
+        var iface = ClassT.forName("com.sun.management.OperatingSystemMXBean");
+        var bean = ManagementFactory.getOperatingSystemMXBean();
+        for (var i = 0; i < methodNames.length && out === null; i++) {
+            try {
+                var m = iface.getMethod(methodNames[i]);
+                var v = m.invoke(bean);
+                if (v !== null && v !== undefined) out = v;
+            } catch (e1) {}
+        }
+    } catch (e2) {}
+    return out;
+}
+
+/**
+ * Host CPU load. JMX returns 0 on the very first call because it has no
+ * previous sample to diff against, so sample a few times and take the highest
+ * non-zero reading (a genuinely idle host simply stays at 0).
+ */
+function hostCpuLoad() {
+    var best = null;
+    for (var i = 0; i < 4; i++) {
+        var v = osMetric(["getCpuLoad", "getSystemCpuLoad"]);
+        if (v !== null) {
+            var n = Number(v);
+            if (best === null || n > best) best = n;
+            if (n > 0) return n;
+        }
+        try { Thread.sleep(250); } catch (e) {}
+    }
+    return best;
+}
+
+/**
+ * Snapshot of the host/JVM state at the moment it is called. Purely read-only
+ * JMX + Runtime calls; everything that may be unavailable is reported as null
+ * instead of failing the run.
+ */
+function collectEnvironment() {
+    var rt = Runtime.getRuntime();
+    var heapMax = rt.maxMemory();
+    var heapUsed = rt.totalMemory() - rt.freeMemory();
+
+    var memTotal = osMetric(["getTotalMemorySize"]);
+    var memFree = osMetric(["getFreeMemorySize"]);
+    var cpu = hostCpuLoad();
+    var procCpu = osMetric(["getProcessCpuLoad"]);
+    var procs = null;
+    try { procs = ProcessHandle.allProcesses().count(); } catch (e) {}
+
+    var args = "";
+    try {
+        var jvmArgs = ManagementFactory.getRuntimeMXBean().getInputArguments();
+        var parts = [];
+        for (var i = 0; i < jvmArgs.size(); i++) parts.push(String(jvmArgs.get(i)));
+        args = parts.join(" ");
+    } catch (e3) {}
+
+    return {
+        os: System.getProperty("os.name", "") + " " + System.getProperty("os.version", ""),
+        osArch: System.getProperty("os.arch", ""),
+        cpuCores: rt.availableProcessors(),
+        cpuLoadPct: cpu === null ? null : round1(cpu * 100.0),
+        procCpuLoadPct: procCpu === null ? null : round1(procCpu * 100.0),
+        memTotalMb: memTotal === null ? null : bytesToMb(Number(memTotal)),
+        memFreeMb: memFree === null ? null : bytesToMb(Number(memFree)),
+        memUsedPct: (memTotal === null || memFree === null)
+            ? null : pct(Number(memTotal) - Number(memFree), Number(memTotal)),
+        heapMaxMb: bytesToMb(heapMax),
+        heapUsedMb: bytesToMb(heapUsed),
+        heapUsedPct: pct(heapUsed, heapMax),
+        javaVersion: System.getProperty("java.version", ""),
+        javaVendor: System.getProperty("java.vendor", ""),
+        javaVm: System.getProperty("java.vm.name", ""),
+        javaHome: System.getProperty("java.home", ""),
+        jvmArgs: args,
+        hostProcesses: procs === null ? null : Number(procs)
+    };
+}
+
+function envJson(env, indent) {
+    var j = "";
+    j += indent + "\"os\": \"" + esc(env.os) + "\",\n";
+    j += indent + "\"osArch\": \"" + esc(env.osArch) + "\",\n";
+    j += indent + "\"cpuCores\": " + env.cpuCores + ",\n";
+    j += indent + "\"cpuLoadPct\": " + (env.cpuLoadPct === null ? "null" : env.cpuLoadPct) + ",\n";
+    j += indent + "\"procCpuLoadPct\": " + (env.procCpuLoadPct === null ? "null" : env.procCpuLoadPct) + ",\n";
+    j += indent + "\"memTotalMb\": " + (env.memTotalMb === null ? "null" : env.memTotalMb) + ",\n";
+    j += indent + "\"memFreeMb\": " + (env.memFreeMb === null ? "null" : env.memFreeMb) + ",\n";
+    j += indent + "\"memUsedPct\": " + (env.memUsedPct === null ? "null" : env.memUsedPct) + ",\n";
+    j += indent + "\"heapMaxMb\": " + env.heapMaxMb + ",\n";
+    j += indent + "\"heapUsedMb\": " + env.heapUsedMb + ",\n";
+    j += indent + "\"heapUsedPct\": " + env.heapUsedPct + ",\n";
+    j += indent + "\"javaVersion\": \"" + esc(env.javaVersion) + "\",\n";
+    j += indent + "\"javaVendor\": \"" + esc(env.javaVendor) + "\",\n";
+    j += indent + "\"javaVm\": \"" + esc(env.javaVm) + "\",\n";
+    j += indent + "\"javaHome\": \"" + esc(env.javaHome) + "\",\n";
+    j += indent + "\"jvmArgs\": \"" + esc(env.jvmArgs) + "\",\n";
+    j += indent + "\"hostProcesses\": " + (env.hostProcesses === null ? "null" : env.hostProcesses) + "\n";
+    return j;
+}
+
 function percentile(sorted, p) {
     if (sorted.length === 0) return 0;
     var idx = Math.ceil(sorted.length * p / 100.0) - 1;
@@ -75,6 +200,7 @@ function percentile(sorted, p) {
 // main() would return immediately and JsPlus would not wait for the pending
 // promise before shutting down the script engine.
 function main() {
+    var envBefore = collectEnvironment();
     var url         = envOr("LOADTEST_URL", "https://localhost:8443/default/");
     var concurrency = parseInt(envOr("LOADTEST_CONCURRENCY", 10), 10);
     var total       = parseInt(envOr("LOADTEST_TOTAL", 1000), 10);
@@ -83,6 +209,9 @@ function main() {
 
     print("LoadTest target=" + url + " concurrency=" + concurrency
           + " total=" + total + " timeout=" + timeoutSec + "s");
+    print("[LoadTest] environment before: " + envBefore.os + " cores=" + envBefore.cpuCores
+          + " memFree=" + (envBefore.memFreeMb === null ? "n/a" : envBefore.memFreeMb + "MB")
+          + " heapMax=" + envBefore.heapMaxMb + "MB jdk=" + envBefore.javaVersion);
 
     // --- base path (normalized JS_PLUS_PATH) ---
     var PathsT = Java.type("java.nio.file.Paths");
@@ -217,6 +346,7 @@ function main() {
         }
     }
     var elapsedMs = (System.nanoTime() - startAtomic.get()) / 1000000;
+    var envAfter = collectEnvironment();
     if (sent < total) {
         print("[LoadTest] OVERALL BUDGET hit after " + Math.round(elapsedMs / 1000)
               + "s (" + sent + "/" + total + " requests issued) — finishing early");
@@ -262,6 +392,10 @@ function main() {
     // --- JSON ---
     var json = "{\n";
     json += "  \"timestamp\": \"" + ts + "\",\n";
+    json += "  \"environment\": {\n";
+    json += "    \"before\": {\n" + envJson(envBefore, "      ") + "    },\n";
+    json += "    \"after\": {\n" + envJson(envAfter, "      ") + "    }\n";
+    json += "  },\n";
     json += "  \"target\": \"" + esc(url) + "\",\n";
     json += "  \"concurrency\": " + concurrency + ",\n";
     json += "  \"totalRequests\": " + total + ",\n";
@@ -293,7 +427,8 @@ function main() {
     // --- HTML dashboard (offline, static SVG/CSS) ---
     var html = buildHtml(url, concurrency, total, ts, Math.round(elapsedMs),
         success, failed, round1(qps), Math.round(avg), Math.round(p50), Math.round(p90),
-        Math.round(p95), Math.round(p99), Math.round(max), statusCount, perSec, hist, errors);
+        Math.round(p95), Math.round(p99), Math.round(max), statusCount, perSec, hist, errors,
+        envBefore, envAfter);
 
     // --- write outputs into docs/latest/report/ (the JsPlus-Core docs layout)
     //     and mirror them into the legacy test_reports/ folder ---
@@ -320,25 +455,13 @@ function main() {
         "../docs/latest/report/",
         "docs/latest/report/"
     ]);
-    var legacyDir = resolveReportDir([
-        (jppBase !== "" ? jppBase + "/../../test_reports/" : "../test_reports/"),
-        (jppBase !== "" ? jppBase + "/../../../test_reports/" : "test_reports/"),
-        "../test_reports/",
-        "test_reports/"
-    ]);
+
     print("LoadTest reportDir=" + primaryDir);
     Files2.writeString(Paths2.get(primaryDir + "loadtest-result.json"), json, StandardCharsets2.UTF_8);
     print("JSON written to " + primaryDir + "loadtest-result.json");
     Files2.writeString(Paths2.get(primaryDir + "loadtest-dashboard.html"), html, StandardCharsets2.UTF_8);
     print("Dashboard written to " + primaryDir + "loadtest-dashboard.html");
-    try {
-        if (legacyDir !== primaryDir) {
-            Files2.writeString(Paths2.get(legacyDir + "loadtest-result.json"), json, StandardCharsets2.UTF_8);
-            Files2.writeString(Paths2.get(legacyDir + "loadtest-dashboard.html"), html, StandardCharsets2.UTF_8);
-        }
-    } catch (e) {
-        print("[WARN] Could not write legacy loadtest copy: " + e);
-    }
+
     print("Result: success=" + success + " failed=" + failed
           + " qps=" + round1(qps) + " avg=" + Math.round(avg)
           + "ms p50=" + Math.round(p50) + "ms p90=" + Math.round(p90)
@@ -358,7 +481,7 @@ main();
 // ============================================================================
 function buildHtml(tUrl, tConc, tTotal, tTs, tElapsedMs, tSuccess, tFailed,
                    tQps, tAvg, tP50, tP90, tP95, tP99, tMax, tStatusCount,
-                   tPerSec, tHist, tErrors) {
+                   tPerSec, tHist, tErrors, tEnvBefore, tEnvAfter) {
     var sb = "";
     sb += "<!DOCTYPE html>\n<html lang=\"zh-HK\">\n<head>\n<meta charset=\"UTF-8\">\n";
     sb += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n";
@@ -446,6 +569,16 @@ function buildHtml(tUrl, tConc, tTotal, tTs, tElapsedMs, tSuccess, tFailed,
     sb += "<tr><td>Max</td><td>" + tMax + " ms</td></tr>\n";
     sb += "</table>\n</div>\n";
 
+    // Runtime environment (host + JVM snapshot taken before/after the run)
+    sb += "<div class=\"panel\"><h2>Runtime Environment</h2>\n";
+    sb += envTable(tEnvBefore, tEnvAfter);
+    sb += "<div class=\"sub\" style=\"margin:10px 0 0;line-height:1.5\">"
+        + "QPS 只宜在同一個環境下互相比較：CPU 核數、可用實體記憶體、JVM heap 及"
+        + "背景進程數都會直接影響讀數。本區塊記錄的是該次量測當時的實際狀態，"
+        + "同一次 JSON（<code>environment.before / environment.after</code>）亦保留同樣資料。"
+        + "</div>\n";
+    sb += "</div>\n";
+
     // Errors
     if (tErrors.length > 0) {
         sb += "<div class=\"panel\"><h2>Errors (first 20)</h2>\n";
@@ -457,8 +590,61 @@ function buildHtml(tUrl, tConc, tTotal, tTs, tElapsedMs, tSuccess, tFailed,
     return sb;
 }
 
-function card(k, v, cls) {
-    return "<div class=\"card " + cls + "\"><div class=\"k\">" + k
+/** HTML-escape for table cells (esc() above is JSON-oriented). */
+function escHtml(s) {
+    return String(s).split("&").join("&amp;").split("<").join("&lt;")
+        .split(">").join("&gt;").split('"').join("&quot;");
+}
+
+function envCell(v, suffix) {
+    return (v === null || v === undefined) ? "n/a" : String(v) + (suffix || "");
+}
+
+/** CPU cell: a 0% "before" reading is normally the JVM's first JMX sample. */
+function cpuCell(v, other) {
+    if (v === null || v === undefined) return "n/a";
+    if (v === 0 && other !== null && other !== undefined && other > 0) {
+        return "0% (first sample; see after)";
+    }
+    return v + "%";
+}
+
+function heapCell(e) {
+    return e.heapUsedMb + " MB (" + e.heapUsedPct + "%)";
+}
+
+/**
+ * Two-column (before/after) table of the host/JVM snapshot. Rows that cannot
+ * change during the run (OS, JDK, heap ceiling, JVM args) span both columns.
+ */
+function envTable(b, a) {
+    var sb = "<table><tr><th>Metric</th><th>Before run</th><th>After run</th></tr>\n";
+    sb += "<tr><td>OS / arch</td><td>" + escHtml(b.os + " " + b.osArch)
+        + "</td><td>" + escHtml(a.os + " " + a.osArch) + "</td></tr>\n";
+    sb += "<tr><td>CPU cores</td><td>" + b.cpuCores + "</td><td>" + a.cpuCores + "</td></tr>\n";
+    sb += "<tr><td>CPU load (whole host)</td><td>" + cpuCell(b.cpuLoadPct, a.cpuLoadPct)
+        + "</td><td>" + cpuCell(a.cpuLoadPct, b.cpuLoadPct) + "</td></tr>\n";
+    sb += "<tr><td>CPU load (this JVM)</td><td>" + cpuCell(b.procCpuLoadPct, a.procCpuLoadPct)
+        + "</td><td>" + cpuCell(a.procCpuLoadPct, b.procCpuLoadPct) + "</td></tr>\n";
+    sb += "<tr><td>Physical memory total</td><td colspan=\"2\">"
+        + envCell(b.memTotalMb, " MB") + "</td></tr>\n";
+    sb += "<tr><td>Physical memory free</td><td>" + envCell(b.memFreeMb, " MB")
+        + "</td><td>" + envCell(a.memFreeMb, " MB") + "</td></tr>\n";
+    sb += "<tr><td>Physical memory used</td><td>" + envCell(b.memUsedPct, "%")
+        + "</td><td>" + envCell(a.memUsedPct, "%") + "</td></tr>\n";
+    sb += "<tr><td>JVM heap max</td><td colspan=\"2\">" + b.heapMaxMb + " MB</td></tr>\n";
+    sb += "<tr><td>JVM heap used</td><td>" + heapCell(b) + "</td><td>" + heapCell(a) + "</td></tr>\n";
+    sb += "<tr><td>JDK</td><td colspan=\"2\">" + escHtml(b.javaVersion) + " · " + escHtml(b.javaVendor)
+        + " · " + escHtml(b.javaVm) + "</td></tr>\n";
+    sb += "<tr><td>JVM args</td><td colspan=\"2\">"
+        + (b.jvmArgs === "" ? "(none)" : escHtml(b.jvmArgs)) + "</td></tr>\n";
+    sb += "<tr><td>Host processes</td><td>" + envCell(b.hostProcesses)
+        + "</td><td>" + envCell(a.hostProcesses) + "</td></tr>\n";
+    sb += "</table>\n";
+    return sb;
+}
+
+function card(k, v, cls) {    return "<div class=\"card " + cls + "\"><div class=\"k\">" + k
         + "</div><div class=\"v\">" + v + "</div></div>\n";
 }
 

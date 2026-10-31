@@ -19,7 +19,7 @@
 //              creation with header, row content, Allowed[] URI filter and
 //              ParamMaxLength truncation. The original ServerLog config is
 //              captured first and restored at the end.
-// Env      : TESTWEBLOG_FOLDER  default <JS_PLUS_PATH>/../test_reports/weblog_test
+// Env      : TESTWEBLOG_FOLDER  default <JS_PLUS_PATH>/../test/weblog_test
 //            (a scratch folder inside the project; deleted on cleanup)
 // ============================================================================
 
@@ -63,7 +63,7 @@ var r;
 // Scratch folder + the exact CSV path ServerLog derives from the date.
 var testFolder = System.getenv("TESTWEBLOG_FOLDER");
 if (testFolder === null || testFolder === undefined || testFolder === "") {
-    testFolder = basePath + "../test_reports/weblog_test";
+    testFolder = basePath + "../test/weblog_test";
 }
 var dateStr = new SimpleDateFormat("yyyyMMdd").format(new JDate());
 var csvFile = testFolder + "/" + dateStr + ".csv";

@@ -4,22 +4,25 @@ setlocal enabledelayedexpansion
 REM ------------------------------------------------------------------
 REM JsPlus-Tomcat automated test suite — TestAll.bat
 REM Flow:
-REM   1) Database init + H2 server (port %H2_PORT%) — skipped when H2 is
-REM      already running (the DB file is locked by the running server,
-REM      so embedded fallback.sql/change.sql cannot apply).
-REM   2) Wait for H2 :%H2_PORT% to LISTEN.
-REM   3) Run TestAll.js against the running server.
-REM      TestAll.js bootstraps the embedded Tomcat in the SAME JVM
-REM      (mirror of script/StartTomcat.js) so the global `tomcat` object
-REM      and TomcatScriptConsole.MasterConsole exist — that is the only
-REM      mode in which the suites can run.
-REM      Stdin is redirected to NUL so com.killcoding.jsplus.Main exits
-REM      right after the -Task completes (otherwise it blocks on the
-REM      interactive scanner, see Main.java scanner loop).
-REM   4) LoadTest.js (embedded Tomcat, LOADTEST_* env tunables).
-REM   5) Archive reports as docs/reports/<version>.jar following the
-REM      JsPlus-Core docs layout (docs/latest/report/ is the browsable
-REM      newest-reports site; test_reports/ keeps a legacy copy).
+REM   -1) Clean JsPlus\.tmp\* and logs\* from the prior run (align with
+REM       JsPlus-Core) so this run starts with a fresh cache and log.
+REM    0) Stop any existing services (H2 / Tomcat / consoles).
+REM    1) Database init + H2 server (port %H2_PORT%) — skipped when H2 is
+REM       already running (the DB file is locked by the running server,
+REM       so embedded fallback.sql/change.sql cannot apply).
+REM    2) Wait for H2 :%H2_PORT% to LISTEN.
+REM    3) Run TestAll.js against the running server.
+REM       TestAll.js bootstraps the embedded Tomcat in the SAME JVM
+REM       (mirror of script/StartTomcat.js) so the global `tomcat` object
+REM       and TomcatScriptConsole.MasterConsole exist — that is the only
+REM       mode in which the suites can run.
+REM       Stdin is redirected to NUL so com.killcoding.jsplus.Main exits
+REM       right after the -Task completes (otherwise it blocks on the
+REM       interactive scanner, see Main.java scanner loop).
+REM    4) LoadTest.js (embedded Tomcat, LOADTEST_* env tunables).
+REM    5) Archive reports as docs/reports/<version>.jar following the
+REM       JsPlus-Core docs layout (docs/latest/report/ is the browsable
+REM       newest-reports site, single canonical location).
 REM ------------------------------------------------------------------
 
 if "%1"=="" (
@@ -75,6 +78,15 @@ REM H2 TCP port: read from the JsPlus config (env JsPlus_H2_PORT, default 3307).
 if not defined JsPlus_H2_PORT set "JsPlus_H2_PORT=3307"
 set "H2_PORT=%JsPlus_H2_PORT%"
 echo [TestAll] H2 port: %H2_PORT%
+
+REM ------------------------------------------------------------------
+REM Step -1: Clean previous run artifacts (align with JsPlus-Core).
+REM   JsPlus\.tmp\*  — transient JS console / compiled caches from the prior run
+REM   logs\*         — app logs from the prior run (so this run's log is fresh)
+REM ------------------------------------------------------------------
+echo [TestAll] Cleaning JsPlus\.tmp\* and logs\* ...
+if exist "%JS_PLUS_PATH%.tmp" del /q /s "%JS_PLUS_PATH%.tmp\*" >nul 2>&1
+if exist "%JS_PLUS_PATH%..\logs" del /q /s "%JS_PLUS_PATH%..\logs\*" >nul 2>&1
 
 REM ------------------------------------------------------------------
 REM Step 0: Stop any existing services (H2 / Tomcat / consoles) so the
@@ -138,7 +150,7 @@ REM finishes, so make sure a WORKING H2 is reachable on :%H2_PORT% first
 REM (netstat may still show a half-dead H2 holding the port, so we do a
 REM real TCP connect test); then start a standalone Tomcat, run LoadTest
 REM against it, and stop Tomcat again.
-REM Outputs: ../test_reports/loadtest-result.json + loadtest-dashboard.html
+REM Outputs: ../docs/latest/report/loadtest-result.json + loadtest-dashboard.html
 REM Override via env: LOADTEST_URL, LOADTEST_CONCURRENCY,
 REM                    LOADTEST_TOTAL, LOADTEST_TIMEOUT
 REM ------------------------------------------------------------------
@@ -224,8 +236,12 @@ REM is only a WARN and never changes the suite exit code (RC captured above).
 REM ------------------------------------------------------------------
 set "TOMCAT_JAR="
 for %%j in ("%JS_PLUS_PATH_ORIGIN%..\LibHome\jsplus\default\jsplus-tomcat-*.jar") do set "TOMCAT_JAR=%%j"
+set "HAS_REPORT="
+for %%f in ("%JS_PLUS_PATH_ORIGIN%..\docs\latest\report\*") do set "HAS_REPORT=1"
 if not defined TOMCAT_JAR (
     echo WARN: jsplus-tomcat-*.jar not found, skipping report archive.
+) else if not defined HAS_REPORT (
+    echo WARN: docs/latest/report is empty ^(no report written^), skipping report archive.
 ) else (
     for %%f in ("!TOMCAT_JAR!") do set "TOMCAT_FNAME=%%~nxf"
     set "TOMCAT_VERSION=!TOMCAT_FNAME:jsplus-tomcat-=!"

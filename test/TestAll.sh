@@ -139,7 +139,7 @@ trap cleanup EXIT
 # (netstat may still show a half-dead H2 holding the port, so we do a
 # real TCP connect test); then start a standalone Tomcat, run LoadTest
 # against it, and stop Tomcat again.
-# Outputs: ../test_reports/loadtest-result.json + loadtest-dashboard.html
+# Outputs: ../docs/latest/report/loadtest-result.json + loadtest-dashboard.html
 # Override via env: LOADTEST_URL, LOADTEST_CONCURRENCY,
 #                    LOADTEST_TOTAL, LOADTEST_TIMEOUT
 # ------------------------------------------------------------------
@@ -211,6 +211,8 @@ PROJECT_ROOT="${JS_PLUS_PATH}.."
 TOMCAT_JAR=$(ls "$PROJECT_ROOT/LibHome/jsplus/default/"jsplus-tomcat-*.jar 2>/dev/null | head -n 1)
 if [ -z "$TOMCAT_JAR" ]; then
     echo "WARN: jsplus-tomcat-*.jar not found, skipping report archive."
+elif [ -z "$(ls -A "$PROJECT_ROOT/docs/latest/report" 2>/dev/null)" ]; then
+    echo "WARN: docs/latest/report is empty (no report written), skipping report archive."
 else
     TOMCAT_VERSION=$(basename "$TOMCAT_JAR" | sed 's/^jsplus-tomcat-//; s/\.jar$//')
     echo "[TestAll] Archiving test reports as docs/reports/${TOMCAT_VERSION}.jar (docs/latest/report)..."
