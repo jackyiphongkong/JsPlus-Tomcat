@@ -79,7 +79,7 @@ function readConfigSnapshot() {
     try {
         var Files = Java.type("java.nio.file.Files");
         var Paths = Java.type("java.nio.file.Paths");
-        var propsPath = basePath + "config/tomcat.properties";
+        var propsPath = basePath + "config/Tomcat.properties";
         var content = Files.readString(Paths.get(propsPath));
         var arr = content.split("\n");
         for (var i = 0; i < arr.length; i++) {
@@ -113,7 +113,7 @@ function checkTomcatConfig() {
         ["DomainProxy.enable", "true"]
     ];
     var content = "";
-    var propsPath = basePath + "config/tomcat.properties";
+    var propsPath = basePath + "config/Tomcat.properties";
     try {
         var Files = Java.type("java.nio.file.Files");
         var Paths = Java.type("java.nio.file.Paths");

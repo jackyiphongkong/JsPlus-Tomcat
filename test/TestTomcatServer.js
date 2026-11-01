@@ -79,7 +79,7 @@ function readProps() {
     try {
         var Files = Java.type("java.nio.file.Files");
         var Paths = Java.type("java.nio.file.Paths");
-        var content = Files.readString(Paths.get(basePath + "config/tomcat.properties"));
+        var content = Files.readString(Paths.get(basePath + "config/Tomcat.properties"));
         var lines = content.split("\n");
         for (var i = 0; i < lines.length; i++) {
             var ln = lines[i];
@@ -238,10 +238,10 @@ var cfgErr = props["__error__"];
 check({
     name: "tomcat.properties readable",
     ok: cfgErr === undefined,
-    detail: cfgErr !== undefined ? "read error: " + cfgErr : basePath + "config/tomcat.properties parsed",
+    detail: cfgErr !== undefined ? "read error: " + cfgErr : basePath + "config/Tomcat.properties parsed",
     objective: "Verify the config file can be read for the contract checks",
     objectiveZh: "驗證 config 檔案可讀以進行契約檢查",
-    command: "Files.readString(" + basePath + "config/tomcat.properties)"
+    command: "Files.readString(" + basePath + "config/Tomcat.properties)"
 });
 
 function cfgCheck(name, key, expected, command) {

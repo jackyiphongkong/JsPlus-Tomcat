@@ -259,7 +259,7 @@ function configSnapshot() {
     try {
         var Files = Java.type("java.nio.file.Files");
         var Paths = Java.type("java.nio.file.Paths");
-        var propsPath = System.getProperty("JS_PLUS_PATH") + "config/tomcat.properties";
+        var propsPath = System.getProperty("JS_PLUS_PATH") + "config/Tomcat.properties";
         var content = Files.readString(Paths.get(propsPath));
         var arr = content.split("\n");
         for (var i = 0; i < arr.length; i++) {

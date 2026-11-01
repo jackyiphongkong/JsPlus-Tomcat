@@ -431,10 +431,10 @@ public class TomcatServer {
 	/** Applies JVM/Tomcat system attributes from the config to a connector. */
 	private void setAttributes(Connector _Connector) {
 		try {
-			File attsFile = new File(String.format("%s/config/attributes.properties", TOMCAT_HOME));
+			File attsFile = new File(String.format("%s/config/Attributes.properties", TOMCAT_HOME));
 			if (attsFile.exists()) {
 				ConfigProperties prop = new ConfigProperties();
-				// Applies every attribute from attributes.properties onto the connector.
+				// Applies every attribute from Attributes.properties onto the connector.
 				final Runnable updatedRunnable = new Runnable() {
 					@Override
 					public void run() {
@@ -454,7 +454,7 @@ public class TomcatServer {
 		}
 	}
 
-	/** Reads the {@code tomcat.properties} file into a flat params map (static). */
+	/** Reads the {@code Tomcat.properties} file into a flat params map (static). */
 	public final static void loadTomcatProps(final Map<String, String> params) {
 		try {
 			if (CommonTools.isBlank(TOMCAT_HOME))
@@ -471,10 +471,10 @@ public class TomcatServer {
 			System.out.println("TOMCAT_HOME: " + System.getProperty("TOMCAT_HOME"));
 			System.out.println("TOMCAT_PID: " + System.getProperty("TOMCAT_PID"));
 			Logger.systemInfo(TomcatServer.class, "SystemProperties: {}", System.getProperties());
-			File tomcatConfigFile = new File(String.format("%s/config/tomcat.properties", TOMCAT_HOME));
+			File tomcatConfigFile = new File(String.format("%s/config/Tomcat.properties", TOMCAT_HOME));
 			if (tomcatConfigFile.exists()) {
 				ConfigProperties cp = new ConfigProperties();
-				// Copies every tomcat.properties entry into the startup params map.
+				// Copies every Tomcat.properties entry into the startup params map.
 				final Runnable updateTomcatPropRun = new Runnable() {
 					@Override
 					public void run() {
