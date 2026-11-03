@@ -1,480 +1,139 @@
 # JsPlus-Tomcat
 
-> **A lightweight, Java-native Nginx alternative.** One JVM, one folder: reverse proxy, web server and
-> per-domain gateway built on embedded **Apache Tomcat 11** — scriptable from JS, zero plugins.
-> **Download, unzip and run** — no installer, no system-level configuration, ready to serve.
+**A lightweight, Java-native Nginx alternative.** A reverse proxy, web server and per-domain gateway built on embedded **Apache Tomcat 11**: per-domain routing, Basic Auth, IP allow/deny, attack defense and TLS are live rows in an embedded H2 database and are managed as one-line calls from a GraalVM JS console. No XML server config, no plugin tier, no external install — the whole stack (Tomcat + H2 + JS runtime + webapps) boots from a single folder in one JVM.
 
-An embedded **Apache Tomcat 11** server for the JsPlus runtime (`com.killcoding.jsplus.tomcat`).
-Like Nginx it fronts many domains from a single process, but in pure Java: per-domain reverse
-proxying, per-domain Basic Auth, hot-reloadable SSL certificates, request resource allocation and
-GraalVM JS request consoles — with no XML server config, no external install and no plugins to
-manage. It boots a full Tomcat from Java code and adds a scriptable layer on top, so the whole
-server (start, stop, routing, auth, SSL) is managed in one line from the JS console.
+## Main features
 
-> Version: `7.0.0 (2026.10.02)` · Base source: `apache-tomcat-11.0.1-embed.zip`
+| Feature | Description | Class |
+| --- | --- | --- |
+| **Reverse proxy** | Route a `domain:port` to a backend target; hop-by-hop headers stripped, forwarded/upstream headers configurable; per-domain JS `filter()` (response rewrite) and `preRequest()` (cache/stub short-circuit) hooks | `DomainProxy` |
+| **Per-domain Basic Auth** | Auth switch and user list per `domain:port`, AES-encrypted passwords, cached lookups, account lockout after consecutive failures | `SecurityFilter` |
+| **IP access control** | One ALLOW/DENY rule per row per `domain:port`; exact IP, CIDR and wildcard patterns; server-wide `0:0` fallback; allow wins over deny | `IpFilter` |
+| **IP attack defense** | Batched request logging plus sliding-window rules that auto-ban offending IPs into `domain_ip_rule` and lift the ban on expiry | `IpAttackDefense` |
+| **Embedded Tomcat** | Programmatic start / stop / restart of Tomcat 11; multi-webapp deployment; connector and resource tuning | `TomcatServer` |
+| **HTTP/2** | `h2` over TLS (ALPN on the SSL connector) and `h2c` on the plain connector (HTTP/1.1 Upgrade or prior knowledge) | `TomcatServer` |
+| **Hot-reloadable SSL** | Add or reload a host certificate on the running connector; DB-backed host records are re-applied at every boot | `TomcatServer` |
+| **Script console pool** | Bounded pool of GraalVM JS consoles that per-request script execution draws from, with usage metrics | `TomcatScriptConsole` |
+| **Web access log** | Asynchronous batched CSV logging with size-based rotation, archiving and URI allow/ignore rules | `ServerLog` |
+| **Database-driven configuration** | Auth, mapping, SSL, IP and defense settings are living table rows; edits apply immediately and are restored at startup | H2 `tomcatdb` |
 
----
+## Runtime environment
 
-## Highlights — what makes it different
+### Java
 
-Most embedded-Tomcat projects only embed the engine. JsPlus-Tomcat turns the server into a
-**scriptable, database-driven runtime**:
+Requires **GraalVM 25 (Java 25)**, placed at `Java\default` (not tracked by Git; launchers fall back to the system `JAVA_HOME` when missing):
 
-- **A Java-native Nginx alternative** — Nginx-style reverse proxying, per-domain virtual hosting, SSL
-  termination, IP attack defense and connection/resource control all run in a single JVM with zero
-  plugins; no separate reverse-proxy tier to deploy, configure or maintain.
-- **The whole server is a JS object** — start, stop, restart, and every management task
-  (`createDomainAuth`, `setDomainMapping`, `createDomainSslHost`, `addSslHost`,
-  `loadDomainSslHosts`, `createDomainIpRule`, `createDefenseRule`, ...) are one-line calls from the
-  GraalVM JS console. No XML, no restart.
-- **Runtime configuration lives in H2, not in files** — `domain_auth`, `domain_mapping_param`,
-  `domain_ssl_host`, `domain_ip_rule` and `ip_defense_rule` are the live source of truth: auth,
-  IP access, mapping and attack-defense changes apply immediately (proxy cache / auth checks), SSL
-  host changes follow the hot-reload rules below, and everything is re-applied automatically at startup.
-- **Per-domain multi-tenancy on a single Tomcat** — each `domain:port` gets its own reverse-proxy
-  target, its own Basic Auth, its own IP allow/deny rules, its own attack-defense rules and its own
-  SSL certificate, all managed independently.
-- **Hot-reloadable SSL** — a new certificate hot-loads onto the running server via `addSslHost(...)`;
-  `updateDomainSslHost()` and `removeDomainSslHost()` only change the DB record and require a Tomcat
-  restart to take effect.
-- **Standalone single-JVM deployment** — one folder, one JVM: Tomcat + H2 + GraalVM JS runtime +
-  webapps, with no external server or DBMS to install.
-- **Fine-grained request resource allocation** — connector tuning (`maxThreads`, `maxConnections`,
-  timeouts, size limits, compression) plus a pooled JS console that bounds scriptable processing.
-- **Simple code, easy to maintain** — the server is a handful of plain Java classes in one package;
-  every dependency is a plain JAR bundled under `LibHome/`, easy to find and ship — no Maven/Gradle
-  dependency resolution, no IDE or server plugins to install. Upgrading the embedded Tomcat (or any
-  library) means swapping the JARs and rebuilding with `ant`: no config migration, no plugin management.
+| Directory | Purpose |
+| --- | --- |
+| `Java\default` | Full JDK for build and startup (includes `jmods`) |
 
-| Classic Tomcat | JsPlus-Tomcat |
-|---|---|
-| `server.xml` + restart to change anything | JS console API, effective at runtime |
-| SSL change ⇒ restart | `addSslHost()` hot reload for new hosts; update/remove ⇒ restart |
-| Static webapp deployment | Programmatic deployment; per-domain proxy, auth and SSL |
-| External DB / extra installs | Embedded H2 + GraalVM JS in a single JVM |
+### Ant (optional)
 
-Compared to **Nginx**:
+`Ant\default` bundles Ant; falls back to the system `ANT_HOME` when missing. Build entry: `ant.bat` (Linux/macOS: `ant.sh`). Only needed to rebuild the project JAR — not required to run.
 
-| Nginx | JsPlus-Tomcat |
-|---|---|
-| Written in C; native install + `nginx.conf` edits + `nginx -s reload` | Pure Java, embedded Tomcat; download, unzip and run — no install |
-| Static config; changes need file edits and a reload | Scriptable from the JS console + DB-driven config, effective at runtime |
-| Extensions via compiled C modules | Extend via JS scripts (GraalVM) and plain-JAR dependencies |
-| SSL/cert management is manual per server block | Hot-reloadable SSL, DB-backed hosts, per-domain certificates |
+### Dependencies
 
----
-
-## Features
-
-- **Embedded Tomcat 11** — programmatic startup via `TomcatServer`, no XML server config required.
-- **Multi-webapp deployment** — any number of `Webapp.contextPath[n]` / `Webapp.appBase[n]` pairs from `tomcat.properties`.
-- **HTTP + HTTPS dual connector** — default `8080` (HTTP) and `8443` (HTTPS); per-host keystores and
-  **hot reload of SSL certificates** without restarting the server.
-- **Web server & request resource allocation** — serves HTTP/HTTPS with fine-grained controls over
-  how network requests consume resources: worker threads (`maxThreads`), connection caps
-  (`maxConnections`), timeouts, request-size limits, GZIP compression and a pooled JS console for
-  scriptable per-request handling.
-- **Connector tuning** — `maxThreads`, `maxPostSize`, `maxSavePostSize`, `maxCookieCount`,
-  `maxParameterCount`, `asyncTimeout`, `connectionTimeout`, `keepAliveTimeout`, `maxConnections`,
-  upload timeouts and GZIP compression, all configurable.
-- **HTTP/2** — `h2` over TLS (ALPN negotiation on the SSL connector) and `h2c`
-  via HTTP/1.1 Upgrade / prior knowledge on the plain connector
-  (`Http2.enable`, `Http2.maxConcurrentStreams`).
-- **External web resources** — mount extra JARs (`jarResourcePath`), an external classes directory
-  (`classesPath`) and external static directories (`webResourcePath` + `webResourceMount`) into a webapp.
-- **DomainProxy (reverse proxy)** — maps a `domain:port` to a backend target, scriptable in JS
-  per domain (see `JsPlus/domain/*.js`), with hop-by-hop header stripping, forwarded/response headers
-  and a JS `filter()` hook (gzip-aware body rewriting).
-- **SecurityFilter (Basic Auth)** — per `domain:port` authentication backed by H2, AES-encrypted
-  passwords, cached lookups, plus a full management API from the JS console.
-- **IpFilter (IP allow/deny)** — per `domain:port` access control backed by H2: one rule per row
-  (`ALLOW` / `DENY` + one IP pattern), supporting exact IPs, CIDR blocks and wildcards, with a
-  server-wide `0:0` fallback rule; rejected requests get `403`, changes apply immediately.
-- **IpAttackDefense (IP attack defense)** — every request is recorded to `ip_request_log` with
-  batched, asynchronous DB inserts (CacheArray + CacheDriverExecutor); configurable rules
-  count requests per IP in a sliding window (`domain:port`, optionally narrowed to a URI regex)
-  and auto-ban offending IPs into `domain_ip_rule` (DENY) until the ban expires.
-- **TomcatScriptConsole** — a pooled set of GraalVM JS script consoles so request handling can be
-  extended with scripts; dynamic pool size with usage metrics.
-- **ServerLog** — asynchronous CSV web-access logging with batching, size-based rotation,
-  archiving and URI allow/ignore rules.
-- **Graceful shutdown** — `stop()` with a 30-second force-stop fallback.
-- **Standalone deployment** — the web server, H2 database, JS runtime and webapps all boot from
-  one directory (`JsPlus/`) in a single JVM process; no external Tomcat or database server to install.
-
----
-
-## Architecture
-
-```
-JsPlus runtime (JS layer)                    Java layer (this project)
-┌──────────────────────────────┐   ┌──────────────────────────────────────┐
-│ script/StartTomcat.js        │   │ com.killcoding.jsplus.tomcat          │
-│   └─ TomcatEmbed.js          │──▶│  TomcatServer      (embedded Tomcat)  │
-│      start()/stop()/restart()│   │  ├─ IpFilter       (IP allow/deny)    │
-│      domain-auth APIs        │   │  ├─ SecurityFilter (per-domain auth)  │
-│      domain-auth APIs        │   │  ├─ DomainProxy    (reverse proxy)    │
-│   └─ domain/*.js mapping     │   │  ├─ ServerLog      (CSV access logs)  │
-│   └─ ghost scripts (H2/Tomcat)│  │  └─ TomcatScriptConsole (GraalVM pool)│
-└──────────────────────────────┘   └──────────────────────────────────────┘
-                                              │
-                          ┌───────────────────┼────────────────────┐
-                          ▼                   ▼                    ▼
-                    H2 database        webapps (app/trade)    SSL keys (key/)
-                    tomcatdb
-```
-
-**Runtime flow**
-
-```
-JsPlus/bin/StartH2.sh (or BG_StartH2.sh for background execution)
-        │
-        ▼
-JsPlus/bin/StartTomcat.sh (or BG_StartTomcat.sh)
-        │
-        ▼
-com.killcoding.jsplus.Main (java -cp "<LibHome>/*" -ScriptEngine graalvm.js -Env script -WriteHistory false -GhostName H2Ghost -Task script/StartTomcat.js)
-        │
-        ▼
-TomcatEmbed.js ──► reads config/tomcat.properties, builds the parameter map
-        │
-        ▼
-TomcatServer (background thread)
-        ├──► creates HTTP/HTTPS connectors
-        ├──► deploys every configured webapp
-        ├──► registers IpFilter (per-domain IP allow/deny)
-        ├──► registers SecurityFilter (per-domain Basic Auth)
-        └──► registers DomainProxy servlet when proxying is enabled
-        │
-        ▼
-Loads domain mappings
-        ├──► H2: domain_mapping_param
-        └──► per-domain JS scripts under JsPlus/domain/
-```
-
----
-
-## Repository layout
-
-```
-JsPlus-Tomcat/
-├── src/                        # Java sources of this project
-│   └── com/killcoding/jsplus/tomcat/
-│       ├── TomcatServer.java        # embedded Tomcat bootstrap & lifecycle
-│       ├── SecurityFilter.java      # per-domain Basic Auth filter
-│       ├── IpFilter.java            # per-domain IP allow/deny filter
-│       ├── DomainProxy.java         # scriptable reverse proxy servlet
-│       ├── ServerLog.java           # async CSV web logger
-│       └── TomcatScriptConsole.java # GraalVM JS console pool
-├── JsPlus/                     # JsPlus runtime home (JS_PLUS_PATH)
-│   ├── bin/                    # Start/Stop scripts (.sh / .bat)
-│   ├── config/                 # tomcat.properties, DataSource, Logger, env …
-│   ├── script/                 # JS bootstrap: StartTomcat.js, TomcatEmbed.js …
-│   ├── domain/                 # per-domain mapping scripts (domain:port.js)
-│   ├── webapps/                # bundled sample webapps (app, trade)
-│   ├── key/                    # dev keystore.jks / truststore.jks
-│   ├── ghost/                  # ghost helper scripts (H2Ghost, TomcatGhost)
-├── LibHome/                    # dependency JARs (tomcat, h2, graalvm, nashorn, jsplus …)
-├── dbscript/                   # change.sql / fallback.sql (H2 schema)
-├── test/                       # TestAll.bat/.sh + eight JS suites + LoadTest.js
-├── docs/                       # latest/api, apis/<ver>.jar, latest/report, reports/<ver>.jar
-├── version.properties          # build version (jr.major/minor/patch)
-├── changes.log / changes_zh-HK.log  # build history (en / zh-HK)
-├── build.xml                   # Ant build → LibHome/jsplus/default/jsplus-tomcat-<version>.jar
-├── ant.bat                     # Windows Ant wrapper
-└── ant.sh                      # Linux/macOS Ant wrapper
-```
-
----
-
-## Requirements
-
-- **Java** — a JDK under `../Java/default/` (e.g. GraalVM JDK 25), or any JDK reachable via
-  `JAVA_HOME` / `PATH` (launcher scripts fall back automatically).
-- **Apache Ant** — only needed to rebuild `jsplus-tomcat-<version>.jar` (not required to run); bundled
-  in `ant/default/`, falling back to the system `ANT_HOME` / PATH.
-- **H2** — bundled in `LibHome/h2/default/`.
-
----
-
-## Build
-
-Compiles `src/` and packages `com/**` and `org/**` into:
-
-```
-LibHome/jsplus/default/jsplus-tomcat-<version>.jar
-```
-
-The file name carries the build version from `version.properties` (patch +1 on
-every build), so releases never overwrite each other.
-
-```sh
-# Linux / macOS
-ant
-
-# Windows
-ant.bat
-```
-
-`ant.sh` / `ant.bat` resolve `JAVA_HOME` and `ANT_HOME` from the bundled `Java/default/` and
-`ant/default/` next to the script, falling back to the system `JAVA_HOME` / `ANT_HOME` (or PATH)
-when the bundled copies are missing.
-
-Every successful build increments the build version (`version.properties` —
-`jr.major.minor.patch`, patch +1 per build) and appends one history line to
-`changes.log` (English) and `changes_zh-HK.log` (Traditional Chinese) at the
-project root:
-
-```
-v<version>  <build timestamp>  <note>
-```
-
-Pass `-Dchange.note="..."` (e.g. `ant -Dchange.note="add auth lockout"`) to record
-a short description on that line. The header is written on the first build only.
-
-`build` also regenerates the API documentation on every run:
-
-- the javadoc site is written to **`docs/latest/api/`** (`windowtitle` carries the
-  version, `-Xdoclint:none`, source links included) and archived as
-  **`docs/apis/<version>.jar`** (one jar per release);
-- skip this step with `-Djavadoc.skip=true` (useful for quick compile-only cycles).
-
-The `docs/` tree mirrors the JsPlus-Core layout:
-
-| Path | Content |
-|---|---|
-| `docs/latest/api/` | API javadoc site of the newest release — open `docs/latest/api/index.html` |
-| `docs/apis/<version>.jar` | Archived API javadoc jar per release (one jar per version) |
-| `docs/latest/report/` | Test reports of the newest run — every `TestAll.bat` / `TestAll.sh` run writes here; open `docs/latest/report/TestAll-Report.html` |
-| `docs/reports/<version>.jar` | Archived test-report jar per run (one jar per version) |
-
-After every build the java sources in `src/` are compared (read-only) against the
-Git mirror at `D:/Githubrepos/JsPlus-Tomcat/src`. When differences are found, a
-temporary entry is appended to both `changes.log` and `changes_zh-HK.log`:
-
-```
-found diffed: <N> java file(s) (<timestamp>)      (en) / 偵測到差異：…（zh-HK）
-  DIFF: <relative path>                  (exists in both, content differs)
-  MISSING in Githubrepos: <path>         (only in the Working tree)
-  MISSING in Working: <path>             (only in the Git mirror)
-```
-
-The comparison is read-only — nothing is copied or committed automatically; the
-entry is a signal for the developer to review and reconcile the two trees. When
-a `found diffed` entry appears, the assistant automatically analyzes the
-differences and appends a human-readable note (English in `changes.log`,
-Traditional Chinese in `changes_zh-HK.log`) explaining which tree is ahead, why
-the files differ, and what was done to reconcile them.
-
----
+H2, Tomcat, GraalVM and the JsPlus runtime are bundled as plain JARs under `LibHome/`. No Maven/Gradle resolution and no server or IDE plugin is involved; upgrading a library means swapping the JAR and rebuilding.
 
 ## Quick start
 
-> Scripts use the bundled JDK at `JsPlus/../Java/default/bin/java` when present; otherwise they
-> fall back to `JAVA_HOME` or `java` on PATH.
+First run only — create the schema once:
 
-> **First-time setup — create the Tomcat database:** before the first run, apply `dbscript/change.sql`
-> to the main database (`tomcatdb`) once, to create the user and tables the server needs:
-> 1. `JsPlus/bin/StartH2Console.sh tomcatdb` (or `.bat`) — opens the H2 SQL console connected to `tomcatdb`.
-> 2. Copy the contents of `dbscript/change.sql` and execute them in the console (or run
->    `RUNSCRIPT FROM '<full path to change.sql>';`).
+| Step | Command | Purpose |
+| --- | --- | --- |
+| 0 | `JsPlus\bin\StartH2Console.bat tomcatdb` | Open the H2 SQL console on `tomcatdb`; execute `dbscript\change.sql` there |
 
-```sh
-# 1. Start the H2 database server (default TCP port 3307, see Appenv.properties)
-JsPlus/bin/StartH2.sh          # or StartH2.bat on Windows
+Routine startup:
 
-# 2. Start the embedded Tomcat (default HTTP 8080 / HTTPS 8443)
-JsPlus/bin/StartTomcat.sh      # or StartTomcat.bat
+| Step | Command | Purpose |
+| --- | --- | --- |
+| 1 | `JsPlus\bin\StopAll.bat` | Stop all services |
+| 2 | `JsPlus\bin\BG_StartH2.bat` | Start H2 in the background, hidden window (TCP `3307`) |
+| 3 | `JsPlus\bin\BG_StartTomcat.bat` | Start the embedded Tomcat in the background (HTTP `8080`, HTTPS `8443`) |
 
-# 3. Open the bundled sample webapp
-#    http://localhost:8080        (HTTP)
-#    https://localhost:8443       (HTTPS, dev self-signed certs in key/)
+Then open the bundled sample webapp:
+
+```
+http://localhost:8080        HTTP
+https://localhost:8443       HTTPS, dev self-signed certificate in JsPlus\key\
 ```
 
-Notes:
-
-- A script engine argument may be passed, e.g. `StartTomcat.sh graalvm.js` (default).
-- Stop everything with `JsPlus/bin/StopAll.sh` (`.bat` on Windows); stop Tomcat or H2 individually
-  with `StopTomcat` / `StopH2` (no argument needed).
-- To run in the background (detached, no console window attached), use `JsPlus/bin/BG_StartH2` /
-  `BG_StartTomcat` (`.sh` / `.bat`) instead of the foreground `Start*` scripts.
-- The server also starts a **Ghost** console (`H2Ghost`) used for remote command tables.
-
----
-
-## Standalone deployment
-
-The system is designed to run as a **standalone, self-contained unit** — copy the folder to a
-machine, start two scripts, and the whole stack (web server + database + scripting runtime +
-webapps) is up. **Download, unzip and run** — the distribution is a plain folder; extract it
-anywhere, point it at a JDK, and it is ready to use immediately.
-Everything lives in one directory and runs in a single JVM process, so a single
-node is sufficient to serve the full system.
-
-- **One runtime home** — `JsPlus/` (`JS_PLUS_PATH`) holds everything: `config/`, `webapps/`, `key/`,
-  `script/` and `ghost/`; all dependency JARs are bundled under `LibHome/`.
-- **Bundled database** — H2 ships in `LibHome/h2/default/`; `bin/StartH2` starts the local H2 TCP
-  server and the data files live under `Database/` (gitignored).
-- **Single JVM** — `bin/StartTomcat` launches one Java process (`com.killcoding.jsplus.Main`) which
-  boots the embedded Tomcat together with the H2 data sources and the GraalVM script consoles.
-- **No external installs** — no standalone Tomcat and no separate DBMS are required; the only
-  external component is a JDK under `../Java/`.
-- **Same experience on Windows & Linux** — every script has a `.bat` and `.sh` twin
-  (`StartH2`, `StartTomcat`, `StopH2`, `StopTomcat`, `StopAll`, ghost helpers).
-
-Typical deployment steps:
-
-1. Copy `JsPlus/` + `LibHome/` (and a JDK into `Java/default/`) to the target machine.
-2. Run `JsPlus/bin/StartH2` — starts the H2 database server.
-3. Run `JsPlus/bin/StartTomcat` — starts the embedded Tomcat on `8080` / `8443`.
-4. Stop everything with `JsPlus/bin/StopAll`.
-
----
-
-## Request forwarding (Web Server/Proxy)
-
-One switch in `JsPlus/config/tomcat.properties` decides the server's personality:
-
-| `DomainProxy.enable` | Mode | Behaviour |
-|---|---|---|
-| `false` (code default when the key is absent) | **Standalone mode** | No proxy servlet; the server serves the webapps deployed under `JsPlus/webapps/` directly on `8080`/`8443` — a plain embedded-Tomcat web server for a single site. |
-| `true` (set by the shipped `tomcat.properties`) | **Web Server (Proxy) mode** | The `DomainProxy` servlet is registered on `/*`; per-`domain:port` mappings are loaded from H2 at startup and every request is routed to its backend target, with per-domain Basic Auth and hot-reloadable SSL on top. Use this to front multiple domains / backend apps from one JVM, like Nginx. |
-
-How it works under the hood:
-
-- `DomainProxy.enable=false` (also the code fallback when the key is absent): `addServlet` is skipped, so
-  no proxy routing — requests are served by the deployed webapps themselves. The auth filter is
-  still registered, so per-`domain:port` Basic Auth keeps working.
-- `DomainProxy.enable=true`: the `DomainProxy` servlet is mapped to `/*` and `loadDomainMapping()` replays
-  every row of `domain_mapping_param` into the proxy cache at startup; mappings added later via
-  `tomcat.setDomainMapping(...)` take effect immediately. A request for a `domain:port` without a
-  mapping answers `502 Domain config not found`.
-
-To switch modes, edit `tomcat.properties`, then restart — the change applies from the next boot.
-
----
+A script engine may be passed as the first argument, e.g. `BG_StartTomcat.bat graalvm.js` (default). Use the foreground `StartH2` / `StartTomcat` variants to keep a console window attached. `StopTomcat` / `StopH2` stop one service, `StopAll` stops everything.
 
 ## Configuration
 
-### `JsPlus/config/tomcat.properties`
+### `JsPlus/config/Tomcat.properties`
 
 | Key | Shipped value | Description |
-|---|---|---|
-| `port` | `${TOMCAT_PORT}` (8080) | HTTP connector port |
-| `sslPort` | `8443` | HTTPS connector port |
-| `Webapp.contextPath[n]` / `Webapp.appBase[n]` | `/` → `webapps/default/` | webapp deployments |
-| `maxThreads` / `maxPostSize` / `maxSavePostSize` | `1000` / `200MB` | connector limits |
+| --- | --- | --- |
+| `port` / `sslPort` | `8080` / `8443` | HTTP and HTTPS connector ports |
+| `Webapp.contextPath[n]` / `Webapp.appBase[n]` | `/` → `webapps/default/` | webapp deployments (any number of pairs) |
+| `maxThreads` / `maxPostSize` / `maxSavePostSize` | `1000` / `200MB` | worker threads and request size limits |
 | `connectionTimeout` / `keepAliveTimeout` | `300000` | connector timeouts (ms) |
 | `reloadable` | `true` | hot reload of deployed webapps |
-| `SSL.enable` / `SSL.keyRoot` | `true` / `key/` | SSL switch and keystore root |
-| `SSL.keystoreFile[0]` / `SSL.keystorePass[0]` / `SSL.keyAlias[0]` | `keystore.jks` / `tomcat` / `tomcat` | default certificate |
-| `SSL.truststoreFile` / `SSL.truststorePass` / `SSL.truststoreType` | `truststore.jks` / `tomcat` / `JKS` | client-auth truststore |
-| `Http2.enable` | `true` | HTTP/2 switch — `h2` via ALPN on the SSL connector, `h2c` upgrade on the plain connector |
-| `Http2.maxConcurrentStreams` | `200` | max concurrent HTTP/2 streams per connection |
-| `TomcatScriptConsole.poolSize` / `cacheSeconds` / `freedDelayMs` | `100` / `2` / `10` | script console pool tuning |
+| `SSL.enable` / `SSL.keyRoot` | `true` / `${JS_PLUS_PATH}/key/` | SSL switch and keystore root |
+| `SSL.keystoreFile[0]` / `SSL.keystorePass[0]` / `SSL.keyAlias[0]` | `default_keystore.jks` / `changeit` / `client` | default certificate |
+| `SSL.truststoreFile` / `SSL.truststorePass` / `SSL.truststoreType` | `default_truststore.jks` / `changeit` / `JKS` | client-authentication truststore |
+| `Http2.enable` / `Http2.maxConcurrentStreams` | `true` / `200` | HTTP/2 switch and concurrent-stream cap |
+| `TomcatScriptConsole.poolSize` / `cacheSeconds` / `freedDelayMs` | `100` / `2` / `10` | console pool size, param cache, release delay |
 | `TomcatScriptConsole.engineName` | `graalvm.js` | JS engine (nashorn fallback available) |
-| `DomainProxy.enable` | `true` | enable the reverse-proxy servlet |
-| `DomainProxy.proxyConnectTimeout` | `60s` | upstream connect timeout |
-| `DomainProxy.proxyRequestTimeout` | `30s` | whole-request timeout (connect + response headers); per-domain `requestTimeout` overrides |
-| `SecurityFilter.cacheSeconds` | `5` | auth-check cache duration (s) |
-| `IpFilter.enable` | `true` | master switch for the IP allow/deny filter |
-| `IpFilter.cacheSeconds` | `30` | per-domain IP-rule cache duration (s) |
-| `IpAttackDefense.enable` | `true` | master switch for IP request logging + attack defense |
-| `IpAttackDefense.logTimer` | `1000` | batch flush interval for `ip_request_log` (ms) |
-| `IpAttackDefense.ruleCacheSeconds` | `60` | defense-rule cache duration (s) |
-| `IpAttackDefense.logRetention` | `7d` | soft-delete `ip_request_log` rows older than this (0 = disabled; `ms\|s\|m\|h\|d\|w`) |
-| `IpAttackDefense.logPhysicalDelete` | `30d` | physically delete rows soft-deleted longer than this (0 = disabled) |
-| `errorRedirectEnable` / `errorRedirectUrl` | `false` | send 302 instead of error body |
-| `WebLog.*` | — | see *Web logging* below |
+| `DomainProxy.enable` | `true` | register the reverse-proxy servlet on `/*` |
+| `DomainProxy.proxyConnectTimeout` / `proxyRequestTimeout` | `60s` / `30s` | upstream connect and whole-request timeouts |
+| `SecurityFilter.cacheSeconds` | `5` | auth-check cache duration (s); `0` disables caching |
+| `IpFilter.enable` / `IpFilter.cacheSeconds` | `true` / `30` | IP filter switch and rule cache duration |
+| `IpAttackDefense.enable` / `logTimer` / `ruleCacheSeconds` | `true` / `1000` / `60` | defense switch, batch flush interval (ms), rule cache |
+| `IpAttackDefense.logRetention` / `logPhysicalDelete` | `7d` / `30d` | soft-delete and physical-delete age for `ip_request_log` (`0` disables) |
+| `errorRedirectEnable` / `errorRedirectUrl` | `false` | answer `302` instead of an error body |
 
-Additional connector attributes may be supplied via `JsPlus/config/attributes.properties`
-(hot-reloaded, applied to all connectors).
+`DomainProxy.enable=false` (also the code default when the key is absent) skips the proxy servlet: the deployed webapps answer requests directly and the server behaves as a plain embedded-Tomcat web server. The auth filter stays registered either way. Additional connector attributes may be supplied through `JsPlus/config/Attributes.properties`, applied to every connector on reload.
 
-### Request resource allocation (connector tuning)
-
-Beyond the parameters in the table above, `TomcatServer` exposes these network/resource controls.
-Each is applied only when set in `tomcat.properties`; blank or `-1` means Tomcat's own default is kept:
-
-| Key | Shipped value | What it controls |
-|---|---|---|
-| `maxConnections` | — | max simultaneous connections accepted by the connector |
-| `asyncTimeout` | — | timeout for async requests (ms) |
-| `connectionUploadTimeout` | — | upload timeout; uploads bypass `connectionTimeout` |
-| `disableUploadTimeout` | `true` | disable the connection timeout while uploading |
-| `maxCookieCount` | — | max number of cookies per request |
-| `maxParameterCount` | — | max request parameters (form/query) |
-| `encoding` | `UTF-8` | URI body encoding |
-| `compressionEnable` | `false` | enable GZIP response compression |
-| `compressableMimeType` | — | MIME types eligible for compression |
-| `compressionMinSize` | `1024` | minimum response size to compress (bytes) |
-
-For scriptable request handling, the **GraalVM JS console pool** itself is a resource-allocation
-knob: `TomcatScriptConsole.poolSize` bounds how many requests can be processed through scripts at
-once, `cacheSeconds` controls how long console/domain params are cached, and `freedDelayMs` sets
-how quickly a released console returns to the pool. A warning is logged when pool usage passes 80%.
+Additional connector controls, applied only when present (`-1` or blank keeps the Tomcat default): `maxConnections`, `asyncTimeout`, `connectionUploadTimeout`, `disableUploadTimeout`, `maxCookieCount`, `maxParameterCount`, `encoding`, `compressionEnable`, `compressableMimeType`, `compressionMinSize`.
 
 ### `JsPlus/config/Appenv.properties`
 
-Environment/overridable values such as `TOMCAT_PORT`, `H2_PORT` (default `3307`, override with
-`JsPlus_H2_PORT`) and various `Custom_*` / `Env_*` keys used by applications.
+Environment values such as `TOMCAT_PORT` and `H2_PORT` (default `3307`, override with `JsPlus_H2_PORT`), plus `Custom_*` / `Env_*` keys consumed by applications.
 
 ### `JsPlus/config/DataSource.properties`
 
-H2 connection pool for the main database (`jdbc:h2:tcp://localhost:${H2_PORT}/tomcatdb`,
-user `sample_user`, default password set in `dbscript/change.sql`).
+H2 connection pool for `jdbc:h2:tcp://localhost:${H2_PORT}/tomcatdb`, user `sample_user`, password created by `dbscript/change.sql`.
 
-### SSL / TLS
+### Web logging (`WebLog.*`)
 
-- Development certificates ship in `JsPlus/key/` (`keystore.jks`, `truststore.jks`).
-- Extra per-host certificates can be added at runtime:
-  `addSslHost(hostname, keystoreFile, keystorePass, keyAlias)` and reloaded via
-  `reloadSslHostConfig(hostName)` — no server restart required.
-- Optional mTLS via `clientAuth`, `truststoreFile`, `truststorePass`, `truststoreType`.
-- **DB-backed SSL hosts** — manage hosts via the `domain_ssl_host` table from the JS console
-  (`tomcat.createDomainSslHost(...)`, `updateDomainSslHost`, `removeDomainSslHost`,
-  `queryDomainSslHost(s)`, `tomcat.loadDomainSslHosts()`). Persisted rows auto-apply at startup.
-  Each row's `keystore_pass` is stored AES-encrypted with its own per-row `encrypt_key`
-  (following the DomainAuth pattern); legacy plaintext rows keep working and are
-  re-encrypted on their next update. Only `tomcat.addSslHost(...)` applies to the running
-  connector immediately (and persists the row); `updateDomainSslHost` / `removeDomainSslHost`
-  change the DB only — restart Tomcat for them to take effect.
-
----
+| Key | Default | Description |
+| --- | --- | --- |
+| `WebLog.Enable` | `true` | master switch |
+| `WebLog.Folder` | `${JS_PLUS_PATH}/logs/domain` | CSV output folder |
+| `WebLog.MaxFileSize` / `MaxBackupIndex` | `10MB` / `10` | rotation size and retained files |
+| `WebLog.ArchiveDays` | `31` | delete files older than N days |
+| `WebLog.ParamMaxLength` | `20` | truncate logged params and headers |
+| `WebLog.Allowed` / `WebLog.Ignored` | — | regex lists selecting what is logged |
 
 ## Database (H2)
 
-Apply `dbscript/change.sql` on the main DB to create:
+`dbscript/change.sql` creates the runtime tables; `dbscript/fallback.sql` drops them.
 
 | Table | Purpose |
-|---|---|
-| `domain_auth` | per `domain:port` auth switch + AES `encrypt_key` |
-| `domain_auth_user` | usernames with AES-encrypted passwords |
+| --- | --- |
+| `domain_auth` | auth switch and per-domain AES `encrypt_key`, plus lockout policy |
+| `domain_auth_user` | usernames with AES-encrypted passwords and per-account lock state |
 | `domain_mapping_param` | domain → proxy target parameter rows |
-| `domain_ssl_host` | additional SSL host certificate rows (`keystore_pass` AES-encrypted per row) |
-| `domain_ip_rule` | per `domain:port` IP rules (one rule per row: ALLOW/DENY + pattern) |
-| `ip_request_log` | per-IP request records (batched inserts, see *IP attack defense*) |
-| `ip_defense_rule` | attack-defense rules (threshold; optional URI regex; `"0","0"` = server-wide) |
-| `ip_ban` | automatic bans written by the defense engine (with expiry) |
+| `domain_ssl_host` | additional SSL host certificates (`keystore_pass` encrypted per row) |
+| `domain_ip_rule` | IP rules, one ALLOW/DENY + pattern per row (manual and auto-ban rows) |
+| `ip_request_log` | per-request records written in batches |
+| `ip_defense_rule` | attack-defense thresholds, optionally narrowed to a URI regex |
+| `ip_ban` | automatic bans with `expire_time` |
+| `ghost_remote_command` | remote command queue used by the ghost consoles |
 
-`ghost_remote_command` holds remote command queue rows used by the ghost consoles.
-`dbscript/fallback.sql` drops all tables listed above.
-
----
-
-## Domain Proxy & Security
+## Domain proxy and security
 
 ### Reverse proxy (`DomainProxy`)
 
-With `DomainProxy.enable=true`, every request hits the proxy servlet. The target is resolved
-per `domain:port` from:
-
-1. H2 `domain_mapping_param` rows (loaded at startup), or
-2. a per-domain JS script in `JsPlus/domain/<domain>_<port>.js` exposing `DomainMapping.getParams()`:
+Every request is resolved per `domain:port`, first against `domain_mapping_param`, then against a per-domain script `JsPlus/domain/<domain>_<port>.js`:
 
 ```js
-DomainMapping.getParams = function(){
+DomainMapping.getParams = function () {
     return {
-        target: 'https://killcoding.com',   // backend target
+        target: 'https://killcoding.com',
         connectTimeout: '60s',
         forwardedHeaders: { header_A: 'value_1' },
         responseHeaders:  { header_1: 'value_1' },
@@ -484,438 +143,170 @@ DomainMapping.getParams = function(){
 };
 ```
 
-A `DomainMapping.filter()` hook may rewrite the upstream response (gzip-aware) before it is returned.
-
-Mappings can also be managed from the JS console — `tomcat.setDomainMapping(domain, port, params)`,
-`tomcat.removeDomainMapping(domain, port)` and `tomcat.queryDomainMapping(s)` — persisted to
-`domain_mapping_param` and applied to the proxy cache immediately.
-
-**Example — route a `domain:port` in one call:**
+Two optional hooks extend the chain. `DomainMapping.filter()` rewrites the upstream response (gzip-aware) before it is returned. `DomainMapping.preRequest()` runs **before** the upstream call and acts as a cache/stub barrier: return `null` to let the request proceed normally, or return an object to answer without touching the backend:
 
 ```js
-// Forward every request for sample.com:8080 to the backend app on 127.0.0.1:8081
-tomcat.setDomainMapping("sample.com", "8080", {
-    target:       "http://127.0.0.1:8081",      // backend base URL (required)
-    scriptEnable: true,                         // run the per-domain JS script
-    scriptFile:   "sample.com.js" // per-domain params come from this file
-});
-// console: DomainMapping sample.com:8080 created.
-
-// Verify it took effect
-tomcat.queryDomainMapping("sample.com", "8080");
-// console: DomainMapping sample.com:8080 ... (id, domain, port, paramValue, timestamps)
+DomainMapping.preRequest = function () {
+    if (request.getRequestURI() === '/health') {
+        return { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: 'ok' };
+    }
+    return null;   // continue proxying
+};
 ```
 
-The `target` must be a valid backend base URL; without it the proxy answers `502 Target domain not found`.
-Omitting `scriptFile` falls back to the per-domain script matched by `domain:port` (see `JsPlus/domain/`).
+The returned map takes `status` (number, default `200`), `headers` (name → value) and `body` (`string` or `byte[]`). A short-circuited request never reaches the upstream. Manage mappings from the console with `tomcat.setDomainMapping(domain, port, params)`, `removeDomainMapping` and `queryDomainMapping(s)`; changes reach the proxy cache immediately. A `domain:port` without a mapping answers `502 Domain config not found`.
 
 ### Basic Auth (`SecurityFilter`)
-
-Enable auth for a domain and create users from the JS console (exposed on `TomcatEmbed`):
 
 ```js
 tomcat.createDomainAuth('127.0.0.1', '8443', true);
 tomcat.createDomainAuthUser('127.0.0.1', '8443', 'Sample', 'password');
 ```
 
-Management APIs: `updateDomainAuth`, `removeDomainAuth`, `queryDomainAuth(s)`,
-`createDomainAuthUser`, `updateDomainAuthUser`, `removeDomainAuthUser`, `queryDomainAuthUser(s)`.
-Passwords are stored AES-encrypted and verified against the per-domain `encrypt_key`.
-
-**Account lockout.** Each `domain_auth` row carries a lockout policy
-(`max_attempts` = consecutive wrong-password limit, `lock_minutes` = lock
-duration); each `domain_auth_user` row carries the per-account state
-(`failed_attempts`, `locked_until`). A wrong password increments the counter;
-when `failed_attempts` reaches `max_attempts` the account is locked until
-`locked_until`, after which it **auto-unlocks** on the next attempt (no timer
-job needed). While locked, even the correct password is rejected with `401`.
-A successful login resets the counter; changing a user's password also clears
-any lock. Extra APIs:
-
-```js
-tomcat.setAuthLockPolicy('127.0.0.1', '8443', 5, 30);   // max 5 fails, lock 30 min
-tomcat.unlockAuthUser('127.0.0.1', '8443', 'Sample');   // manual unlock
-```
-
-Defaults are `max_attempts=5`, `lock_minutes=30` (set at table creation; an
-idempotent `ALTER` in `dbscript/change.sql` adds the columns to existing
-databases).
+Passwords are stored AES-encrypted against the per-domain `encrypt_key`. **Account lockout:** a wrong password increments `failed_attempts`; at `max_attempts` the account is locked until `locked_until` and then auto-unlocks on the next attempt — no timer job. While locked, even the correct password is rejected with `401`. A successful login resets the counter, and changing a password clears any lock. Policy defaults are `max_attempts=5`, `lock_minutes=30`, adjustable per domain with `setAuthLockPolicy`.
 
 ### IP access control (`IpFilter`)
 
-Per-`domain:port` allow/deny rules backed by the `domain_ip_rule` table, managed from the JS
-console. **Each row is one rule**: a `ruleType` (`ALLOW` / `DENY`) and a single `ipPattern`;
-pattern formats are **exact IP** (`192.168.1.10`), **CIDR** (`192.168.1.0/24`) and **wildcard**
-(`192.168.1.*`). Set `IpFilter.enable=false` in `tomcat.properties` to switch the whole filter off
-(all requests pass through); the filter defaults to enabled.
+One rule per row (`ruleType` + one `ipPattern`), evaluated in this order:
 
-Evaluation order per request:
+1. **Allow wins** — a matching ALLOW rule admits the request even if a DENY rule also matches.
+2. **Deny** — a matching DENY rule rejects with `403`.
+3. **Whitelist mode** — a domain with allow rules but no match rejects the IP.
+4. **No rules** — the request continues to `SecurityFilter` and the webapp.
 
-1. **Allow wins** — any matching `ALLOW` rule (per-domain or the `0:0` fallback) lets the request
-   through, even if a deny rule also matches.
-2. **Deny** — a request matching a `DENY` rule is rejected with `403`.
-3. **Whitelist mode** — a domain with allow rules rejects IPs that match none of them.
-4. **No rules** — everything else passes through to `SecurityFilter` / the webapp.
-
-**Server-wide fallback rule (`0:0`)** — following `SecurityFilter`, a row with `domain = "0"`
-and `port = "0"` acts as a global default: it applies to every `domain:port` that has no rules of
-its own. Precise `domain:port` rules always win over the `0:0` fallback.
+A row with `domain="0"`, `port="0"` is a server-wide default for every `domain:port` without rules of its own; precise rules always win over `0:0`.
 
 ```js
-// Server-wide default: block everyone, then allow the office ranges everywhere
-tomcat.createDomainIpRule("0", "0", "DENY", "0.0.0.0/0");
 tomcat.createDomainIpRule("0", "0", "ALLOW", "192.168.1.0/24");
-```
-
-```js
-// Allow the office ranges, then block one offender — each rule is one row
-tomcat.createDomainIpRule("sample.com", "8080", "ALLOW", "192.168.1.0/24");
-tomcat.createDomainIpRule("sample.com", "8080", "ALLOW", "10.10.0.*");
 tomcat.createDomainIpRule("sample.com", "8080", "DENY", "203.0.113.7");
-// console: DomainIpRule sample.com:8080 [ALLOW] 192.168.1.0/24 created.
-
-// Whitelist mode — allow only 127.0.0.1 on the admin port
-tomcat.createDomainIpRule("sample.com", "8443", "ALLOW", "127.0.0.1");
-
-// Correct a pattern, then verify and list
-tomcat.updateDomainIpRule("sample.com", "8080", "ALLOW", "10.10.0.*", "10.20.0.*");
-tomcat.queryDomainIpRule("sample.com", "8080", "DENY", "203.0.113.7");
-tomcat.queryDomainIpRules();
 ```
 
 ### IP attack defense (`IpAttackDefense`)
 
-Records every request into `ip_request_log` and optionally auto-bans IPs that exceed a configured
-threshold. Logging is **asynchronous and batched** — each request is pushed onto a `CacheArray`
-queue and flushed to the DB in batches by a background `CacheArrayFilter` thread using
-`CacheDriverExecutor.executeBatch` (same pattern as `ServerLog`), so the hot path never blocks on
-a JDBC write.
-
-**How a rule matches** — every rule is matched by `domain:port`; `"0"` / `"0"` makes it
-server-wide (the same `0:0` convention as `IpFilter` / `SecurityFilter`). When `uriPattern`
-is set, the request URI must also match the regex (`Pattern.matcher().find()`); when it is
-blank, every URI on the matched `domain:port` counts.
-
-**How a ban works** — per enabled rule, the engine keeps a sliding-window counter per IP in the
-shared `Cache` (window = `window_seconds`). When an IP's count reaches `threshold`, the engine:
-writes a `DENY` row into `domain_ip_rule` (so `IpFilter` blocks the IP immediately), records the
-ban in `ip_ban` with `expire_time`, and auto-removes the rule + soft-deletes the ban when the ban
-expires. Defense runs before `IpFilter` in the filter chain; a defense/DB failure never blocks
-request serving.
-
-**Workflow**
-
-```
-Request ──► IpAttackDefense.doFilter
-   │
-   ├─ 1. record()  ──► push one row onto CacheArray ──► background thread flushes to
-   │                   ip_request_log in batches (every logTimer ms)
-   │
-   └─ 2. checkDefense() ──► load enabled rules (cached for ruleCacheSeconds)
-          │
-          └─ sliding-window counter per IP (key = ruleId + IP, window = window_seconds)
-                 │
-                 ├─ count < threshold ──────────► pass
-                 └─ count ≥ threshold ──► ban()
-                        ├─ write DENY into domain_ip_rule (tagged with ip_ban_id) ──► IpFilter blocks immediately
-                        ├─ write ip_ban with expire_time = now + ban_seconds
-                        └─ subsequent requests ──► IpFilter ──► 403 Access denied
-
-Background scan (every ≥ 5s): expireBans()
-   └─ ip_ban.expire_time < now ──► soft-delete the ban ──► delete the matching DENY rule
-          ──► IP unblocked automatically
-```
+The filter runs before `IpFilter` in the chain. Each request is pushed onto a `CacheArray` queue and flushed to `ip_request_log` in batches, so the hot path never blocks on JDBC. Per enabled rule the engine keeps a sliding-window counter (key = rule + IP). On reaching the threshold it writes a DENY row into `domain_ip_rule` — blocked immediately by `IpFilter` — records the ban in `ip_ban` with `expire_time`, and lifts both when the ban expires. A defense or DB failure never blocks request serving.
 
 ```js
-// Server-wide: any IP doing > 120 requests/min across the whole server is banned for 600s
 tomcat.createDefenseRule("burst-limit", "0", "0", "", 60, 120, 600, true);
-
-// Per domain:port: > 30 requests/min to sample.com:8080 → ban 300s
-tomcat.createDefenseRule("login-burst", "sample.com", "8080", "", 60, 30, 300, true);
-
-// Per domain:port + URI: > 10 requests/min hitting /api/login → ban 3600s
 tomcat.createDefenseRule("api-login-burst", "sample.com", "8080", "^/api/login", 60, 10, 3600, true);
-
-// Manage rules and bans
-tomcat.queryDefenseRules();
-tomcat.updateDefenseRule("defenseRuleId", "burst-limit", "0", "0", "", 60, 120, 600, true);
-tomcat.removeDefenseRule("defenseRuleId");
-
 tomcat.queryIpBans();
-tomcat.removeIpBan("0", "0", "203.0.113.7");      // manually un-ban now
-
-// Inspect / purge the request log (also queryable via SQL)
-tomcat.queryIpRequestLogs();
-tomcat.clearIpRequestLogs();
+tomcat.removeIpBan("sample.com", "8080", "203.0.113.7");
 ```
 
-Changes take effect immediately (the per-domain cache is invalidated on every write; the next
-request re-reads the DB). `tomcat.loadDomainIpRules()` drops the whole cache to force a re-read
-without waiting for expiry.
+### SSL / TLS
 
----
+Development certificates ship in `JsPlus/key/`. Extra hosts are applied to the running connector by `addSslHost(hostname, keystoreFile, keystorePass, keyAlias)` or `loadDomainSslHosts()`, with no restart; `createDomainSslHost` / `updateDomainSslHost` / `removeDomainSslHost` change the DB record only and take effect on the next boot. Optional mTLS uses `clientAuth` plus the truststore settings above.
 
-## TomcatEmbed.js API reference
+## Management API
 
-Every management call is a method on the `tomcat` object exposed by `JsPlus/script/TomcatEmbed.js`.
-Each method prints the result (`resMap.msg`) to the console and returns it as a string.
+Every method lives on the `tomcat` object exposed by `JsPlus/script/TomcatEmbed.js`, prints `resMap.msg` to the console and returns it as a string.
 
 ### Lifecycle
 
 | Method | Description |
-|---|---|
-| `tomcat.start()` | Load `JsPlus/config/tomcat.properties` and boot the embedded Tomcat |
-| `tomcat.stop()` | Stop the embedded Tomcat |
-| `tomcat.restart()` | `stop()` then `start()` |
+| --- | --- |
+| `tomcat.start()` / `stop()` / `restart()` | Load `Tomcat.properties` and boot, stop, or restart the embedded Tomcat |
 
-### Per-domain Basic Auth (`SecurityFilter`)
+### Basic Auth
 
 | Method | Description |
-|---|---|
-| `tomcat.createDomainAuth(domain, port, authEnable)` | Enable/disable Basic Auth for a `domain:port` |
-| `tomcat.updateDomainAuth(domain, port, authEnable)` | Update the auth switch for a `domain:port` |
-| `tomcat.removeDomainAuth(domain, port)` | Remove the auth config for a `domain:port` |
-| `tomcat.queryDomainAuth(domain, port)` | Show one auth config |
-| `tomcat.queryDomainAuths()` | Show all auth configs |
-| `tomcat.createDomainAuthUser(domain, port, username, plaintextPass)` | Create a user (password AES-encrypted) |
-| `tomcat.updateDomainAuthUser(domain, port, username, plaintextPass)` | Update a user's password (clears any lock) |
-| `tomcat.removeDomainAuthUser(domain, port, username)` | Remove a user |
-| `tomcat.setAuthLockPolicy(domain, port, maxAttempts, lockMinutes)` | Set the lockout policy (wrong-password limit + lock minutes) |
-| `tomcat.unlockAuthUser(domain, port, username)` | Manually unlock a user (clears `failed_attempts` / `locked_until`) |
+| --- | --- |
+| `createDomainAuth(domain, port, authEnable)` / `updateDomainAuth` / `removeDomainAuth` | Manage the auth switch for a `domain:port` |
+| `queryDomainAuth(domain, port)` / `queryDomainAuths()` | Read one or all auth configs |
+| `createDomainAuthUser(domain, port, username, plaintextPass)` / `updateDomainAuthUser` / `removeDomainAuthUser` | Manage users (AES-encrypted passwords) |
+| `setAuthLockPolicy(domain, port, maxAttempts, lockMinutes)` / `unlockAuthUser(domain, port, username)` | Lockout policy and manual unlock |
 
-### Domain mappings (`DomainProxy`)
+### Domain mappings
 
 | Method | Description |
-|---|---|
-| `tomcat.setDomainMapping(domain, port, domainParams)` | Create or update a `domain:port` mapping (see the example above) |
-| `tomcat.removeDomainMapping(domain, port)` | Remove a mapping |
-| `tomcat.queryDomainMapping(domain, port)` | Show one mapping |
-| `tomcat.queryDomainMappings()` | Show all mappings |
+| --- | --- |
+| `setDomainMapping(domain, port, domainParams)` | Create or update a mapping, effective at once |
+| `removeDomainMapping(domain, port)` | Remove a mapping |
+| `queryDomainMapping(domain, port)` / `queryDomainMappings()` | Read one or all mappings |
 
-### SSL hosts (`domain_ssl_host`)
-
-| Method | Description |
-|---|---|
-| `tomcat.createDomainSslHost(hostname, keystoreFile, keystorePass, keyAlias)` | Persist a new SSL host record |
-| `tomcat.updateDomainSslHost(hostname, keystoreFile, keystorePass, keyAlias)` | Update the DB record (restart Tomcat to take effect) |
-| `tomcat.removeDomainSslHost(hostname)` | Soft-delete the record |
-| `tomcat.queryDomainSslHost(hostname)` | Show one SSL host |
-| `tomcat.queryDomainSslHosts()` | Show all SSL hosts |
-| `tomcat.addSslHost(hostname, keystoreFile, keystorePass, keyAlias)` | Apply a host to the running server (persists the record when new) |
-| `tomcat.loadDomainSslHosts()` | Reload all hosts from DB and apply to the running server |
-
-### IP access rules (`domain_ip_rule`)
+### SSL hosts
 
 | Method | Description |
-|---|---|
-| `tomcat.createDomainIpRule(domain, port, ruleType, ipPattern)` | Add one manual rule (`ruleType` = `ALLOW` / `DENY`); rows written by `ip_ban` are never matched by the duplicate check |
-| `tomcat.updateDomainIpRule(domain, port, ruleType, oldIpPattern, newIpPattern)` | Change the pattern of one manual rule only (auto-ban rows are never touched) |
-| `tomcat.removeDomainIpRule(domain, port, ruleType, ipPattern)` | Soft-delete one manual rule only — to lift an auto-ban, use `tomcat.removeIpBan(...)` |
-| `tomcat.queryDomainIpRule(domain, port, ruleType, ipPattern)` | Show one rule, including its `Source` (`manual` / `ip_ban`) and `IpBanId` |
-| `tomcat.queryDomainIpRules()` | Show all rules; each row is tagged `(manual)` or `(ip_ban)` |
-| `tomcat.loadDomainIpRules()` | Clear the rule cache so the next request re-reads the DB |
+| --- | --- |
+| `createDomainSslHost(hostname, keystoreFile, keystorePass, keyAlias)` / `updateDomainSslHost` / `removeDomainSslHost` | Manage DB records (effective on restart) |
+| `queryDomainSslHost(hostname)` / `queryDomainSslHosts()` | Read one or all SSL hosts |
+| `addSslHost(hostname, keystoreFile, keystorePass, keyAlias)` | Apply a host to the running server, persisting the record when new |
+| `loadDomainSslHosts()` | Reload every host from the DB onto the running server |
 
-### IP attack defense (`ip_defense_rule` / `ip_ban` / `ip_request_log`)
+### IP access rules
 
 | Method | Description |
-|---|---|
-| `tomcat.createDefenseRule(ruleName, domain, port, uriPattern, windowSeconds, threshold, banSeconds, enabled)` | Add a defense rule (`"0","0"` = server-wide; `uriPattern` optional URI regex) |
-| `tomcat.updateDefenseRule(ruleId, ruleName, domain, port, uriPattern, windowSeconds, threshold, banSeconds, enabled)` | Update a rule |
-| `tomcat.removeDefenseRule(ruleId)` | Soft-delete a rule |
-| `tomcat.queryDefenseRules()` | Show all rules |
-| `tomcat.queryIpBans()` | Show all automatic bans |
-| `tomcat.removeIpBan(domain, port, ip)` | Remove a ban now (also deletes the DENY rule) |
-| `tomcat.queryIpRequestLogs()` | Show the latest 100 request records |
-| `tomcat.clearIpRequestLogs()` | Delete all request records |
+| --- | --- |
+| `createDomainIpRule(domain, port, ruleType, ipPattern)` | Add one manual rule (`ALLOW` / `DENY`) |
+| `updateDomainIpRule(domain, port, ruleType, oldIpPattern, newIpPattern)` | Change one manual rule's pattern; auto-ban rows are never touched |
+| `removeDomainIpRule(domain, port, ruleType, ipPattern)` | Soft-delete one manual rule; lift an auto-ban with `removeIpBan` instead |
+| `queryDomainIpRule(domain, port, ruleType, ipPattern)` / `queryDomainIpRules()` | Read one or all rules, each tagged `manual` or `ip_ban` |
+| `loadDomainIpRules()` | Drop the rule cache so the next request re-reads the DB |
 
----
+### IP attack defense
 
-## Web logging (`ServerLog`)
+| Method | Description |
+| --- | --- |
+| `createDefenseRule(ruleName, domain, port, uriPattern, windowSeconds, threshold, banSeconds, enabled)` | Add a rule (`"0","0"` = server-wide; `uriPattern` optional) |
+| `updateDefenseRule(ruleId, ...)` / `removeDefenseRule(ruleId)` | Update or soft-delete a rule |
+| `queryDefenseRules()` / `queryIpBans()` | List rules or active bans |
+| `removeIpBan(domain, port, ip)` | Lift a ban now, deleting its DENY rule |
+| `queryIpRequestLogs()` / `clearIpRequestLogs()` | Inspect the latest records or purge the log |
 
-`WebLog.*` keys in `tomcat.properties`:
+## Quick test
 
-| Key | Default | Description |
-|---|---|---|
-| `WebLog.Enable` | `true` | master switch |
-| `WebLog.Folder` | `${JS_PLUS_PATH}/logs/domain` | CSV output folder |
-| `WebLog.MaxFileSize` | `10MB` | rotate size |
-| `WebLog.MaxBackupIndex` | `10` | kept rotated files |
-| `WebLog.ArchiveDays` | `31` | delete logs older than N days |
-| `WebLog.ParamMaxLength` | `20` | truncate params/headers in log |
-| `WebLog.Allowed` / `WebLog.Ignored` | — | regex lists to filter what is logged |
-| `WebLog.Type` | — | comma-separated types to log |
+| Step | Command | Purpose |
+| --- | --- | --- |
+| 1 | `test\TestAll.bat` (Linux/macOS: `test\TestAll.sh`) | Full suite: `StopAll` → clean `.tmp` and `logs` → init databases → start H2 → boot the embedded Tomcat → **139 checks** → load test against a standalone Tomcat → write reports and archive them |
 
-Logs are written asynchronously in batches (default 1s timer) to daily CSV files.
+For a single suite, run the matching `test\Test<Suite>.bat` / `.sh`; each one stops services, prepares H2, and writes its own report, so a module can be verified without the full run.
 
----
+| Suite | Coverage |
+| --- | --- |
+| `TestDomainProxy.js` | 26 cases — mapping CRUD plus live reverse-proxy requests, dispatch and validation |
+| `TestSecurityFilter.js` | 16 cases — auth and user CRUD plus live `401` / `200` checks |
+| `TestIpFilter.js` | 20 cases — rule CRUD plus live `403` / `200` checks and allow-over-deny |
+| `TestIpAttackDefense.js` | 16 cases — defense-rule CRUD and the live auto-ban flow |
+| `TestTomcatServer.js` | 36 cases — connector contract, webapp config, keystore readiness, SSL host CRUD, HTTP/2 handshake |
+| `TestAuthLockout.js` | 7 cases — lockout threshold, rejection while locked, unlock and counter reset |
+| `TestFreed.js` | 6 cases — shared-infrastructure smoke checks |
+| `TestServerLog.js` | 11 cases — async log pipeline, CSV shape, batching and per-domain isolation |
 
-## Command-line arguments
+Every case prints `[PASS]` / `[FAIL]` and writes a colour-coded HTML and Markdown report to `docs/latest/report/` — one pair per suite plus `TestAll-Report` and `TestAll-CI-Summary.md`. Non-query cases append a `dbVerify` block showing the executed `SELECT` and its rows, and each suite ends with a cleanup case so re-runs never pollute one another.
 
-The shell/bat launchers pass command-line options to the JsPlus main class
-(`com.killcoding.jsplus.Main`), e.g.:
-
-```sh
--ScriptEngine graalvm.js    # JS engine (nashorn fallback available)
--Env script                 # runtime environment
--WriteHistory false         # disable console history
--GhostName H2Ghost          # ghost console name
--Task script/StartTomcat.js # bootstrap script
-```
-
-Options use the `-key value` (or `--flag` boolean) form. Inside this project, server startup
-parameters come from `JsPlus/config/tomcat.properties` via `TomcatServer.loadTomcatProps(...)`
-instead of command-line parsing.
-
----
-
-## Automated Testing
-
-### Automated test scripts (console mode)
-
-Eight runnable suites live in `test/` (repo-root).
-They run inside the live JsPlus console — no third-party test framework and no
-launcher scripts needed:
-
-| Script | Coverage |
-|---|---|
-| `TestBase.js` | Shared harness (Java bindings, `check`/`isOk`/`msg`, `callTomcat`, `runCmd`/`curlStatus`, `dbVerify` SQL verification, HTML/MD/CI-summary report writers; reports are written to `docs/latest/report/` (single canonical location)) |
-| `TestAll.js` | Unified entry — runs all eight suites in sequence and prints an aggregate pass/fail summary |
-| `TestDomainProxy.js` | 21 cases — domain mapping CRUD + live reverse-proxy request via `curl` (incl. `mode=internal` dispatch + validation)
-| `TestSecurityFilter.js` | 16 cases — basic-auth CRUD (`domain_auth` / `domain_auth_user`) + live `401`/`200` checks via `curl` |
-| `TestIpFilter.js` | 20 cases — IP rule CRUD (`domain_ip_rule`, ALLOW/DENY incl. `uri` prefix + ALLOW-over-DENY) + live `403`/`200` checks via `curl` |
-| `TestIpAttackDefense.js` | 16 cases — defense-rule CRUD (`ip_defense_rule` / `ip_ban` / `ip_request_log`) + live auto-ban flow (`403`) |
-| `TestTomcatServer.js` | 36 cases — TomcatServer behaviour through the `tomcat` console entry (`TomcatEmbed.js`): `addSslHost` + cleanup, `Webapp.contextPath`/`Webapp.appBase` config contract (incl. legacy-key regression guard), `SSL.*` block, keystore readiness (JKS + alias + trust anchor), read-only behaviour smoke (`getTomcat` / `queryDomainSslHosts` / `loadDomainSslHosts`), DomainSslHost CRUD, and the HTTP/2 contract (`Http2.enable=true` config + live h2c handshake on the plain connector) — every API call records its `{code, msg}` return value, DB writes carry a `dbVerify` (`SELECT *`) verification + cleanup |
-| `TestAuthLockout.js` | 7 cases — account lockout after N failed attempts (`failed_attempts` / `locked_until`), rejection while locked, unlock API, and counter continuation after unlock (live `401` checks + `dbVerify`) |
-| `TestFreed.js` | 6 cases — shared-infrastructure smoke checks that must keep working after the security/IP changes |
-| `TestServerLog.js` | 11 cases — async web-log pipeline (`ServerLog`): write path, CSV record shape, batching/flush behaviour, and per-domain log isolation |
-
-Run the full suite in one go (stops services -> DB init -> H2 -> embedded
-Tomcat -> **134 checks** -> load test against a standalone Tomcat ->
-`docs/latest/report/` + `docs/reports/<version>.jar`):
-
-- Windows: `test\TestAll.bat`
-- Linux: `test/TestAll.sh`
-
-Or, with H2 and Tomcat already started (e.g. `StartH2` then `StartTomcat`),
-run everything directly from the JS console:
+Suites may also be driven from a running console:
 
 ```js
 Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestAll.js');
 /
 ```
 
-Or run an individual suite:
+The load test (`test/LoadTest.js`) is a pure-JS run through the console. Defaults are `https://localhost:8443/default/`, 10 concurrent × 1000 requests, 30 s timeout — `TestAll` raises the total to 10000; override with `LOADTEST_URL`, `LOADTEST_CONCURRENCY`, `LOADTEST_TOTAL` and `LOADTEST_TIMEOUT`. It writes `docs/latest/report/loadtest-result.json` (QPS, avg, p50/p90/p95/p99, max, status distribution, transport errors) and an offline dashboard `loadtest-dashboard.html`. Both record the runtime environment of the run — OS, CPU cores, memory, JVM heap, JDK and JVM arguments — so a QPS figure is only compared against runs captured on the same machine.
 
-```js
-Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestDomainProxy.js');
-/
-Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestSecurityFilter.js');
-/
-Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestIpFilter.js');
-/
-Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestIpAttackDefense.js');
-/
-Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestTomcatServer.js');
-/
-Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestAuthLockout.js');
-/
-Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestFreed.js');
-/
-Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestServerLog.js');
-/
+## Build
+
+```sh
+# Linux / macOS
+ant
+
+# Windows
+ant.bat
 ```
 
-Prerequisites (only for JS-console runs; `TestAll.bat` / `TestAll.sh` handle all of this automatically):
+Compiles `src/` and packages `com/**` and `org/**` into `LibHome/jsplus/default/jsplus-tomcat-<version>.jar`. Every successful build increments the patch in `version.properties`, appends one dated line to `changes.log` and `changes_zh-HK.log`, and regenerates the API site into `docs/latest/api/` with an archived copy at `docs/apis/<version>.jar` (`-Djavadoc.skip=true` skips it). Pass `-Dchange.note="..."` to record a description on the history line.
 
-- Start the services first: `StartH2.bat/sh`, then `StartTomcat.bat/sh`.
-- For the SecurityFilter suite, set `SecurityFilter.cacheSeconds=0` in
-  `JsPlus/config/tomcat.properties` and restart Tomcat — `0` means "do not cache"
-  in this project (a positive value would enable the auth-enable cache), so the
-  live checks read the table state on every request.
-- For the IpFilter suite, set `IpFilter.cacheSeconds=0` in
-  `JsPlus/config/tomcat.properties` and restart Tomcat — the live `403`/`200`
-  checks must read the rule list unconditionally.
-- For the IpAttackDefense suite, set `IpFilter.cacheSeconds=0` and
-  `IpAttackDefense.ruleCacheSeconds=0` in `JsPlus/config/tomcat.properties` and
-  restart Tomcat — the live auto-ban flow (defense rule + auto-written
-  `ip_ban` DENY rule) must take effect immediately.
+`ant.sh` / `ant.bat` resolve `JAVA_HOME` and `ANT_HOME` from the bundled `Java/default/` and `Ant/default/` first, falling back to the system values or `PATH`.
 
-Each check prints `[PASS]` / `[FAIL]`, and a color-coded HTML report
-(green PASS / red FAIL, with Case Id / Test Objective / Result / Detail) is
-written to `docs/latest/report/` — one `Test<Suite>-Report.html` / `.md` pair per
-suite, plus an aggregate `TestAll-Report.html` / `.md` and
-`TestAll-CI-Summary.md`. This is the single canonical location; the legacy
-`test_reports/` mirror has been removed.
+## AI-Agent collaborative development
 
-Step 3 of `TestAll.bat` / `TestAll.sh` then starts a standalone Tomcat and runs
-the built-in load test (`test/LoadTest.js`, a pure-JS port executed through the
-JsPlus console — no separate Java compilation step; defaults:
-`https://localhost:8443/default/`, 10 concurrent x 1000 requests, 30 s timeout;
-override via `LOADTEST_URL` / `LOADTEST_CONCURRENCY` / `LOADTEST_TOTAL` /
-`LOADTEST_TIMEOUT`), writing `docs/latest/report/loadtest-result.json` (raw + summary
-metrics: QPS, avg, p50/p90/p95/p99, max, status distribution, transport errors)
-and an offline HTML chart dashboard `docs/latest/report/loadtest-dashboard.html`
-(no CDN, no JS — metric cards, status distribution, per-second throughput SVG
-and a latency histogram). Both outputs also record the runtime environment of the
-run — `environment.before` / `environment.after` in the JSON and a
-**Runtime Environment** panel in the dashboard: OS/arch, CPU cores, host and
-process CPU load, physical memory total/free/used, JVM heap max/used, JDK
-version/vendor/VM, JVM input arguments and host process count. A QPS figure is
-only comparable against runs captured on the same environment, so the context is
-archived with the number instead of being reconstructed later. The load test warms up with a few unmeasured requests
-and retries transient transport-level failures (connect/reset/timeout) twice,
-so only requests that still fail after retry are counted as `failed`. It uses
-`HttpClient.sendAsync` in batches with `CompletableFuture.allOf().get()` for
-concurrency (pure Java blocking calls — safe on the GraalVM JS runtime, which
-rejects multi-threaded access to JS callbacks) and points the default trust
-store at `JsPlus/key/default_truststore.jks` for the self-signed 8443
-certificate.
+JsPlus-Tomcat is built to be developed with AI agents — automated build, AI-authored code and tests, fully automated verification, and human review of the reports form a closed loop.
 
-After the load test, `TestAll.bat` / `TestAll.sh` stop the standalone Tomcat
-and then run `StopAll` to shut down every remaining service (including H2), so
-the whole run leaves nothing behind. (TestAll.js exits via `System.exit(0)`
-directly instead of `ScriptConsole.exit()`, which would write the shared
-`JsPlus/.tmp/exit.tmp` signal file and take the H2 ghost — and any other JsPlus
-JVM watching that file — down with it.)
-
-Every non-query case appends a `dbVerify` block: the executed `SELECT` statement
-and its result rows are rendered as an HTML table (with a `row num` column) in
-small yellow text, so testers can verify the persisted table state directly
-(executed through the project's `CacheDriverExecutor.find`, the same data-access
-path the APIs use). Each suite finishes with a cleanup-all case that removes its
-remaining test data (e.g. the precondition domain mapping) and verifies the
-affected tables are empty (`deleted=FALSE` -> 0 rows), so re-runs and the
-combined `TestAll.js` run never pollute each other.
-
-### Continuous Integration (GitHub Actions)
-
-`.github/workflows/ci.yml` runs the full suite on every push / pull request
-against `main` / `master`:
-
-1. Check out the repository.
-2. Set up an Oracle GraalVM 25 (`$JAVA_HOME` is used as the fallback Java).
-3. Install Ant.
-4. `ant build` — compiles, packages `LibHome/jsplus/default/jsplus-tomcat-<version>.jar`,
-   and regenerates the API site (`docs/latest/api/` + `docs/apis/<version>.jar`).
-5. Verify that the packaged JAR matches `version.properties` (guards against a
-   stale or mis-named artefact).
-6. Verify the javadoc site (`docs/latest/api/index.html` and
-   `docs/apis/<version>.jar`).
-7. Run `test/TestAll.sh` — the same one-command flow as locally.
-8. Publish `TestAll-CI-Summary.md` to the run's job summary (`if: always()`).
-9. Upload `test-reports` — `docs/latest/report/`, `docs/reports/`,
-   `docs/latest/api/`, `docs/apis/*.jar`, `test/*.log`,
-   `logs/`, `build-verify.log` and the built JAR (`if: always()`,
-   `if-no-files-found: warn`).
-
-Both the summary and the artifact upload run with `if: always()`, so a run that
-fails at an earlier step still publishes its logs and partial reports — a failed
-run is exactly when they are needed.
-
-Note: `Java/` (bundled JDKs) is git-ignored, so the CI runner relies on the
-system JDK; `LibHome/` (all runtime JARs) is committed.
-
----
+| Stage | Description |
+| --- | --- |
+| **Automated environment setup** | `ant.bat` builds in one command (version management → packaging → javadoc); only GraalVM 25 is required (Ant optional); Windows and Linux share the same `.bat` / `.sh` scripts, so the environment is reproducible |
+| **AI-assisted coding** | The embedded GraalVM JS console runs new logic immediately — no restart, no recompilation; the whole server is reachable as the `tomcat` object |
+| **AI-authored test cases** | Standardized JS suites (`Case Cxx` naming over the `TestBase` harness) plug straight into `TestAll`; each module also has its own launcher for a fast single-suite cycle |
+| **Fully automated verification** | Local one-click `TestAll.bat` / `TestAll.sh`; CI (GitHub Actions) builds, runs the suite and archives the reports |
+| **Human review of reports** | `TestAll-Report` and `TestAll-CI-Summary` carry per-case results, `dbVerify` output and failure details; machines judge the tests, humans own the quality |
 
 ## License
 
