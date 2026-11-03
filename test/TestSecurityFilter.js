@@ -7,7 +7,7 @@
 //            running Tomcat, the H2 data source and the global `tomcat` object.
 // Harness  : Shared plumbing (Java bindings, counters, check/isOk/msg and
 //            writeReport) lives in TestBase.js and is loaded below.
-// Output   : <PROJECT_ROOT>/test_reports/TestSecurityFilter-Report.html (green PASS / red FAIL
+// Output   : <PROJECT_ROOT>/docs/latest/report/TestSecurityFilter-Report.html (green PASS / red FAIL
 //            per check), written with BaseFile (DiskFile). Each check prints
 //            [PASS]/[FAIL].
 // NOTE     : In console mode the suite NEVER calls System.exit() (that would
@@ -19,7 +19,7 @@
 //            (DomainProxy/SecurityFilter/IpFilter/IpAttackDefense) are never
 //            touched directly. TomcatEmbed returns the result message string;
 //            callTomcat re-wraps it into {code, msg} for the checks.
-// PREREQ   : In JsPlus/config/tomcat.properties set:
+// PREREQ   : In JsPlus/config/Tomcat.properties set:
 //              SecurityFilter.cacheSeconds=0
 //            The 60s default auth-enable cache would otherwise make the live
 //            curl checks (C10-C12) read stale state after create/update.

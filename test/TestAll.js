@@ -15,7 +15,6 @@
 //              6) TestAuthLockout.js     -> docs/latest/report/TestAuthLockout-Report.html
 //              7) TestFreed.js           -> docs/latest/report/TestFreed-Report.html
 //              8) TestServerLog.js       -> docs/latest/report/TestServerLog-Report.html
-//            (each is also mirrored to the legacy test_reports/ folder)
 //            This entry point then prints an aggregate pass/fail summary.
 // NOTE     : Each suite calls beginTest() and reports its own counters, so
 //            TestAll captures the counters right after each load() completes.
@@ -71,7 +70,7 @@ function waitForPort(port, timeoutSec) {
     return false;
 }
 
-// Read the test-critical lines of tomcat.properties for the report snapshot —
+// Read the test-critical lines of Tomcat.properties for the report snapshot —
 // environment drift (a missing cacheSeconds=0 / enable flag) becomes visible
 // in every report instead of silently flipping the live filter checks.
 function readConfigSnapshot() {
@@ -95,7 +94,7 @@ function readConfigSnapshot() {
             }
         }
     } catch (e) {
-        lines.push("(cannot read tomcat.properties: " + e + ")");
+        lines.push("(cannot read Tomcat.properties: " + e + ")");
     }
     return lines;
 }
@@ -120,7 +119,7 @@ function checkTomcatConfig() {
         content = Files.readString(Paths.get(propsPath));
         print("[Config] reading " + propsPath + " (" + content.split("\n").length + " lines)");
     } catch (e) {
-        return { ok: false, missing: ["<cannot read tomcat.properties: " + e + ">"] };
+        return { ok: false, missing: ["<cannot read Tomcat.properties: " + e + ">"] };
     }
     var missing = [];
     // Line-by-line comparison (no JS RegExp: GraalVM 25 without the regex
@@ -216,13 +215,13 @@ if (BOOTSTRAPPED) {
 var cfgCheck = checkTomcatConfig();
 var cfgLines = readConfigSnapshot();
 print("");
-print("=== Config self-check (tomcat.properties) ===");
+print("=== Config self-check (Tomcat.properties) ===");
 if (cfgCheck.ok) {
     totalPass++;
     print("[PASS] filter config present (SecurityFilter/IpFilter/IpAttackDefense/DomainProxy)");
 } else {
     totalFail++;
-    allFailures.push("Config self-check - tomcat.properties missing: " + cfgCheck.missing.join(", "));
+    allFailures.push("Config self-check - Tomcat.properties missing: " + cfgCheck.missing.join(", "));
     print("[FAIL] filter config -> missing: " + cfgCheck.missing.join(", "));
 }
 
@@ -273,7 +272,7 @@ try {
         + (totalFail === 0 ? "- PASS: filter config present (SecurityFilter/IpFilter/IpAttackDefense/DomainProxy)"
                            : "- FAIL: missing " + (cfgCheck.missing || []).join(", ")) + "\n\n";
     if ((cfgLines || []).length > 0) {
-        md += "## Config Snapshot (tomcat.properties)\n\n```\n" + (cfgLines || []).join("\n") + "\n```\n\n";
+        md += "## Config Snapshot (Tomcat.properties)\n\n```\n" + (cfgLines || []).join("\n") + "\n```\n\n";
     }
     md += "| Suite | Passed | Failed |\n";
     md += "| --- | --- | --- |\n";
@@ -307,7 +306,7 @@ try {
         + (totalFail === 0 ? "PASS: filter config present (SecurityFilter/IpFilter/IpAttackDefense/DomainProxy)"
                            : "FAIL: missing " + (cfgCheck.missing || []).join(", ")) + "</div>\n";
     if (cfgLines.length > 0) {
-        html += "<h2>Config Snapshot (tomcat.properties)</h2>\n<pre class=\"cfg\">";
+        html += "<h2>Config Snapshot (Tomcat.properties)</h2>\n<pre class=\"cfg\">";
         for (var cl = 0; cl < cfgLines.length; cl++) {
             html += Java.type("java.lang.String").valueOf(cfgLines[cl])
                 .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;") + "\n";

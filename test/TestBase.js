@@ -9,10 +9,10 @@
 //   - runCmd() / curlStatus() process helpers for the live curl checks
 //   - dbVerify() — append a follow-up DB query result to the detail line
 //   - writeReport() -> docs/latest/report/<REPORT_NAME>.html (JsPlus-Core
-//                      docs layout) + a legacy copy under test_reports/
-//   - writeMd()     -> docs/latest/report/<REPORT_NAME>.md + legacy copy
-//   - writeCiSummary() -> docs/latest/report/TestAll-CI-Summary.md + copy
-//   - writeReportFile() — the dual-location writer used by all of the above
+//                      docs layout, the single canonical location)
+//   - writeMd()     -> docs/latest/report/<REPORT_NAME>.md
+//   - writeCiSummary() -> docs/latest/report/TestAll-CI-Summary.md
+//   - writeReportFile() — the shared writer used by all of the above
 // Loaded by each suite (TestDomainProxy.js / TestSecurityFilter.js / ...):
 //   load(System.getProperty("JS_PLUS_PATH") + "../test/TestBase.js")
 // NOTE: Re-loading this file is harmless (var redeclaration is legal in JS);
@@ -250,7 +250,7 @@ function dbVerify(sqlFn) {
     }
 }
 
-// Read the test-critical lines of JsPlus/config/tomcat.properties so every
+// Read the test-critical lines of JsPlus/config/Tomcat.properties so every
 // report carries a config snapshot — environment drift (a missing
 // cacheSeconds=0 / enable flag) becomes visible instead of silently flipping
 // the live filter checks.
@@ -275,7 +275,7 @@ function configSnapshot() {
             }
         }
     } catch (e) {
-        lines.push("(cannot read tomcat.properties: " + e + ")");
+        lines.push("(cannot read Tomcat.properties: " + e + ")");
     }
     return lines;
 }
@@ -360,7 +360,7 @@ function writeReport() {
     var cfgLines = configSnapshot();
     var cfgSection = "";
     if (cfgLines.length > 0) {
-        cfgSection = "<h2>Config Snapshot (tomcat.properties)</h2>\n<pre class=\"cfg\">" + escapeHtml(cfgLines.join("\n")) + "</pre>\n";
+        cfgSection = "<h2>Config Snapshot (Tomcat.properties)</h2>\n<pre class=\"cfg\">" + escapeHtml(cfgLines.join("\n")) + "</pre>\n";
     }
     var html = "<!DOCTYPE html>\n"
         + "<html lang=\"en\">\n"
@@ -418,8 +418,7 @@ function writeReport() {
 }
 
 // Markdown test report — mirrors writeReport() but emits a GitHub-friendly
-// Markdown file into docs/latest/report/<REPORT_NAME>.md (plus a legacy copy
-// under test_reports/ via writeReportFile).
+// Markdown file into docs/latest/report/<REPORT_NAME>.md via writeReportFile.
 function writeMd() {
     var durationMs = Date.now() - suiteStart;
     var reportTitle = (typeof REPORT_TITLE !== "undefined" && REPORT_TITLE !== null && REPORT_TITLE.length > 0)
@@ -430,7 +429,7 @@ function writeMd() {
     md += "**" + passCount + " passed / " + failCount + " failed**\n\n";
     var cfgLines = configSnapshot();
     if (cfgLines.length > 0) {
-        md += "## Config Snapshot (tomcat.properties)\n\n```\n" + cfgLines.join("\n") + "\n```\n\n";
+        md += "## Config Snapshot (Tomcat.properties)\n\n```\n" + cfgLines.join("\n") + "\n```\n\n";
     }
     md += "| Case Id | Test Objective | Result | Detail |\n";
     md += "| --- | --- | --- | --- |\n";
@@ -471,8 +470,7 @@ function writeMd() {
 }
 
 // CI-oriented summary — writes a compact Markdown file into
-// docs/latest/report/ (and a legacy copy into test_reports/) so the CI job
-// can surface it after a run:
+// docs/latest/report/ so the CI job can surface it after a run:
 //   1) it is included in the uploaded docs/latest/report/ artifact
 //      (downloadable) and archived as docs/reports/<version>.jar,
 //   2) the workflow can append it to $GITHUB_STEP_SUMMARY so the GitHub
@@ -529,7 +527,7 @@ function writeCiSummary(params) {
         md += "## Note\n\n" + escapeMd(note) + "\n\n";
     }
     if ((cfgLines || []).length > 0) {
-        md += "## Config Snapshot (tomcat.properties)\n\n```\n" + (cfgLines || []).join("\n") + "\n```\n";
+        md += "## Config Snapshot (Tomcat.properties)\n\n```\n" + (cfgLines || []).join("\n") + "\n```\n";
     }
     try {
         var reportName = (p.reportName !== undefined && p.reportName !== null && p.reportName.length > 0)

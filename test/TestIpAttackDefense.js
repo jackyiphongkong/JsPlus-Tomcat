@@ -7,7 +7,7 @@
 //            running Tomcat, the H2 data source and the global `tomcat` object.
 // Harness  : Shared plumbing (Java bindings, counters, check/isOk/msg and
 //            writeReport) lives in TestBase.js and is loaded below.
-// Output   : <PROJECT_ROOT>/test_reports/TestIpAttackDefense-Report.html (green PASS / red FAIL
+// Output   : <PROJECT_ROOT>/docs/latest/report/TestIpAttackDefense-Report.html (green PASS / red FAIL
 //            per check), written with BaseFile (DiskFile). Each check prints
 //            [PASS]/[FAIL].
 // NOTE     : In console mode the suite NEVER calls System.exit() (that would
@@ -19,7 +19,7 @@
 //            (DomainProxy/SecurityFilter/IpFilter/IpAttackDefense) are never
 //            touched directly. TomcatEmbed returns the result message string;
 //            callTomcat re-wraps it into {code, msg} for the checks.
-// PREREQ   : In JsPlus/config/tomcat.properties set:
+// PREREQ   : In JsPlus/config/Tomcat.properties set:
 //              IpFilter.cacheSeconds=0
 //              IpAttackDefense.ruleCacheSeconds=0
 //            The auto-banned IP is enforced through an ip_ban DENY rule that
@@ -280,7 +280,7 @@ check({
 
 // Case C14
 // ip_request_log is written by a batched CacheArray insert on the
-// IpAttackDefense.logTimer cadence (5000 ms in tomcat.properties); give the
+// IpAttackDefense.logTimer cadence (5000 ms in Tomcat.properties); give the
 // queue a moment to flush before querying.
 Thread.sleep(6000);
 r = callTomcat(function(){ return tomcat.queryIpRequestLogs(); });

@@ -5,7 +5,7 @@
 //              Console.eval(<path to this file>);
 //            Or via TestAll.js (which loads it as suite #5).
 // Harness  : Shared plumbing lives in TestBase.js and is loaded below.
-// Output   : <PROJECT_ROOT>/test_reports/TestTomcatServer-Report.html / .md
+// Output   : <PROJECT_ROOT>/docs/latest/report/TestTomcatServer-Report.html / .md
 // Scope    : Validates the TomcatServer layer THROUGH the console entry
 //            `tomcat` (JsPlus/script/TomcatEmbed.js) — the module class is
 //            never touched directly, mirroring the other suites:
@@ -14,7 +14,7 @@
 //                getMemoryInfo)
 //             B) addSslHost behaviour  — live SSLHostConfig add + domain_ssl_host
 //                write, verified with a dbVerify SELECT, then cleanup
-//             C) Config contract       — tomcat.properties keys exactly match
+//             C) Config contract       — Tomcat.properties keys exactly match
 //                what TomcatServer.loadParams() consumes, including the
 //                renamed Webapp.contextPath/Webapp.appBase keys (regression
 //                guard against the old bare names) and the SSL.* block
@@ -72,7 +72,7 @@ function callDirect(fn) {
     }
 }
 
-// Read tomcat.properties as a key->value map (line-by-line, no regex — the
+// Read Tomcat.properties as a key->value map (line-by-line, no regex — the
 // GraalVM 25 JS runtime has no regex language loaded).
 function readProps() {
     var map = {};
@@ -229,14 +229,14 @@ check({
 });
 
 // ---------------------------------------------------------------------------
-// C. Config contract (tomcat.properties vs TomcatServer.loadParams keys)
+// C. Config contract (Tomcat.properties vs TomcatServer.loadParams keys)
 // ---------------------------------------------------------------------------
 var props = readProps();
 var cfgErr = props["__error__"];
 
 // Case C7
 check({
-    name: "tomcat.properties readable",
+    name: "Tomcat.properties readable",
     ok: cfgErr === undefined,
     detail: cfgErr !== undefined ? "read error: " + cfgErr : basePath + "config/Tomcat.properties parsed",
     objective: "Verify the config file can be read for the contract checks",
@@ -275,7 +275,7 @@ check({
     detail: oldCtx === undefined ? "no bare contextPath[0] key" : "STILL PRESENT: contextPath[0]=" + oldCtx,
     objective: "Verify the old bare contextPath key is gone after the Webapp.* rename",
     objectiveZh: "驗證改名後舊 contextPath 裸鍵已移除",
-    command: "grep '^contextPath\\[' tomcat.properties"
+    command: "grep '^contextPath\\[' Tomcat.properties"
 });
 // Case C10
 check({
@@ -284,7 +284,7 @@ check({
     detail: oldApp === undefined ? "no bare appBase[0] key" : "STILL PRESENT: appBase[0]=" + oldApp,
     objective: "Verify the old bare appBase key is gone after the Webapp.* rename",
     objectiveZh: "驗證改名後舊 appBase 裸鍵已移除",
-    command: "grep '^appBase\\[' tomcat.properties"
+    command: "grep '^appBase\\[' Tomcat.properties"
 });
 
 // SSL block.
@@ -514,7 +514,7 @@ check({
 // ---------------------------------------------------------------------------
 
 // Case C33 — HTTP/2 config contract: Http2.enable must be true in
-// tomcat.properties (the switch TomcatServer.loadParams() consumes).
+// Tomcat.properties (the switch TomcatServer.loadParams() consumes).
 var h2Props = readProps();
 var h2Switch = h2Props["Http2.enable"];
 var h2Enabled = (h2Switch !== undefined && ("" + h2Switch).toLowerCase() === "true");
@@ -523,9 +523,9 @@ check({
     ok: h2Enabled,
     detail: "Http2.enable=" + (h2Switch === undefined ? "(missing)" : h2Switch)
         + (h2Enabled ? " -> h2 over TLS (ALPN) + h2c (Upgrade) active" : " -> HTTP/2 negotiation disabled"),
-    objective: "Verify tomcat.properties enables HTTP/2 (Http2.enable=true), consumed by TomcatServer.loadParams()",
-    objectiveZh: "驗證 tomcat.properties 已啟用 Http2.enable=true（TomcatServer.loadParams 所讀取之開關）",
-    command: "tomcat.properties -> Http2.enable=true"
+    objective: "Verify Tomcat.properties enables HTTP/2 (Http2.enable=true), consumed by TomcatServer.loadParams()",
+    objectiveZh: "驗證 Tomcat.properties 已啟用 Http2.enable=true（TomcatServer.loadParams 所讀取之開關）",
+    command: "Tomcat.properties -> Http2.enable=true"
 });
 
 // Case C34 — live h2c prior-knowledge handshake against the plain connector:

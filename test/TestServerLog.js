@@ -7,7 +7,7 @@
 //            running Tomcat, the H2 data source and the global `tomcat` object.
 // Harness  : Shared plumbing (Java bindings, counters, check/isOk/msg and
 //            writeReport) lives in TestBase.js and is loaded below.
-// Output   : <PROJECT_ROOT>/test_reports/TestServerLog-Report.html (green PASS /
+// Output   : <PROJECT_ROOT>/docs/latest/report/TestServerLog-Report.html (green PASS /
 //            red FAIL per check), written with BaseFile (DiskFile). Each check
 //            prints [PASS]/[FAIL].
 // NOTE     : In console mode the suite NEVER calls System.exit() (that would
@@ -125,7 +125,7 @@ check({
 
 // Reset the shared static CacheArray so this suite starts with a fresh filter.
 // In console mode the running server may already have bound one with its own
-// LogTimer (tomcat.properties WebLog.Enable=true), whose flush thread can be
+// LogTimer (Tomcat.properties WebLog.Enable=true), whose flush thread can be
 // idle — that made the CSV assertions flaky. Standalone mode has no such
 // interference; the reset is harmless either way (the cache is recreated on
 // the next writeWebLog call).

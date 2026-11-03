@@ -22,7 +22,6 @@
 // Outputs (identical to the Java version):
 //   ../docs/latest/report/loadtest-result.json
 //   ../docs/latest/report/loadtest-dashboard.html
-//   (plus a legacy copy under ../test_reports/)
 //
 // The result JSON and the dashboard carry a "environment" block (before/after
 // the measured run): OS/arch, CPU cores and load, physical memory, JVM heap,
@@ -227,6 +226,11 @@ function main() {
         trustCandidates.push(jppBase + "/key/default_truststore.jks");
         trustCandidates.push(jppBase + "/../../../JsPlus/key/default_truststore.jks");
     }
+    // Fall back to the JS_PLUS_PATH system property (set by the test harness).
+    var jppSys = System.getProperty("JS_PLUS_PATH");
+    if (jppSys !== null && jppSys !== "") {
+        trustCandidates.push(jppSys + "key/default_truststore.jks");
+    }
     var trustStore = "";
     for (var t = 0; t < trustCandidates.length; t++) {
         try {
@@ -234,7 +238,13 @@ function main() {
         } catch (e) {}
     }
     if (trustStore === "") {
-        trustStore = "D:/Working/JsPlus-Tomcat/JsPlus/key/default_truststore.jks";
+        // Last resort: relative to the test working directory - no hard-coded drive path.
+        var relTrust = new File("../JsPlus/key/default_truststore.jks");
+        if (relTrust.exists()) {
+            trustStore = relTrust.getAbsolutePath();
+        } else {
+            print("[WARN] LoadTest trustStore not found - HTTPS checks may fail");
+        }
     }
     System.setProperty("javax.net.ssl.trustStore", trustStore);
     System.setProperty("javax.net.ssl.trustStorePassword", "changeit");
@@ -431,7 +441,6 @@ function main() {
         envBefore, envAfter);
 
     // --- write outputs into docs/latest/report/ (the JsPlus-Core docs layout)
-    //     and mirror them into the legacy test_reports/ folder ---
     var Files2 = Java.type("java.nio.file.Files");
     var Paths2 = Java.type("java.nio.file.Paths");
     var StandardCharsets2 = Java.type("java.nio.charset.StandardCharsets");

@@ -6,7 +6,7 @@
 //            no running server needed — the shared static CacheArray is reset
 //            first so the flush uses this suite's short LogTimer).
 // Harness  : Shared plumbing lives in TestBase.js (loaded below).
-// Output   : <PROJECT_ROOT>/test_reports/TestServerLogStress-Report.html
+// Output   : <PROJECT_ROOT>/docs/latest/report/TestServerLogStress-Report.html
 // Focus    : Prove writeWebLog survives a bulk load (default 5000 rows):
 //            every call returns true, the CacheArray background filter drains
 //            ALL rows into the CSV (header + N data rows), first/last rows
