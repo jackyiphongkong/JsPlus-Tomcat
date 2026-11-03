@@ -8,7 +8,7 @@ JAVA_HOME_ORIG="${JAVA_HOME:-}"
 ANT_HOME_ORIG="${ANT_HOME:-}"
 
 export JAVA_HOME="${BIN_PATH}Java/default/"
-export ANT_HOME="${BIN_PATH}ant/default/"
+export ANT_HOME="${BIN_PATH}Ant/default/"
 
 if [ ! -d "$JAVA_HOME" ]; then
     echo "WARN: Bundled Java not found at $JAVA_HOME, falling back to system JAVA_HOME..."

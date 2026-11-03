@@ -2,14 +2,14 @@
 setlocal enabledelayedexpansion
 
 REM ==================================================================
-REM JsPlus-Core release helper - release.bat
+REM JsPlus-Tomcat release helper - release.bat
 REM Scans every sibling project folder under the scan root (default
 REM D:/Working). Any project that contains a LibHome/jsplus/default
-REM folder is a release target: the freshly built jsplus-core-<version>
+REM folder is a release target: the freshly built jsplus-tomcat-<version>
 REM .jar is copied into its LibHome/jsplus/default. The previous
-REM jsplus-core-*.jar there is renamed to *.jar.bak (not deleted);
+REM jsplus-tomcat-*.jar there is renamed to *.jar.bak (not deleted);
 REM other jars are left untouched.
-REM The source project itself (JsPlus-Core) is skipped.
+REM The source project itself (JsPlus-Tomcat) is skipped.
 REM Scan root   : default D:/Working, override via JS_PLUS_RELEASE_ROOT
 REM Exit code   : 0 = success, 1 = failure
 REM ==================================================================
@@ -24,11 +24,11 @@ if not exist "%JAR_DIR%" (
     exit /b 1
 )
 set "LATEST_JAR="
-for /f "delims=" %%f in ('dir /b /o-d "%JAR_DIR%\jsplus-core-*.jar" 2^>nul') do (
+for /f "delims=" %%f in ('dir /b /o-d "%JAR_DIR%\jsplus-tomcat-*.jar" 2^>nul') do (
     if not defined LATEST_JAR set "LATEST_JAR=%%f"
 )
 if not defined LATEST_JAR (
-    echo [release] ERROR: no jsplus-core-*.jar under %JAR_DIR% - run 'ant build' first.
+    echo [release] ERROR: no jsplus-tomcat-*.jar under %JAR_DIR% - run 'ant build' first.
     exit /b 1
 )
 set SRC_JAR=%JAR_DIR%\%LATEST_JAR%
@@ -48,7 +48,7 @@ for /d %%d in ("%SCAN_ROOT%\*") do (
     if /i not "!PROJ_NORM!"=="%CORE_NORM%" (
         if exist "!TGT_DIR!" (
             echo [release] Target : !TGT_DIR!
-            for /f "delims=" %%f in ('dir /b "!TGT_DIR!\jsplus-core-*.jar" 2^>nul') do (
+            for /f "delims=" %%f in ('dir /b "!TGT_DIR!\jsplus-tomcat-*.jar" 2^>nul') do (
                 if exist "!TGT_DIR!\%%f.bak" del /q "!TGT_DIR!\%%f.bak" >nul 2>&1
                 ren "!TGT_DIR!\%%f" "%%f.bak" >nul 2>&1
             )

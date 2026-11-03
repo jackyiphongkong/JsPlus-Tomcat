@@ -10,7 +10,7 @@ if defined ANT_HOME set "ANT_HOME_ORIG=%ANT_HOME%"
 
 SET JAVA_HOME=%BIN_PATH%/Java/default/
 
-SET ANT_HOME=%BIN_PATH%/ant/default/
+SET ANT_HOME=%BIN_PATH%/Ant/default/
 
 if not exist "%JAVA_HOME%" (
     echo WARN: Bundled Java not found at %JAVA_HOME%, falling back to system JAVA_HOME...
