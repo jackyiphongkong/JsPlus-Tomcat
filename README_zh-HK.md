@@ -276,7 +276,7 @@ tomcat.removeIpBan("sample.com", "8080", "203.0.113.7");
 套件亦可於運行中的控制台驅動：
 
 ```js
-Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestAll.js');
+Console.eval(System.getenv('JS_PLUS_PATH') + '/../test/TestAll.js');
 /
 ```
 
