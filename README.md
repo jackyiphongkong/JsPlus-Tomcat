@@ -276,7 +276,7 @@ Every case prints `[PASS]` / `[FAIL]` and writes a colour-coded HTML and Markdow
 Suites may also be driven from a running console:
 
 ```js
-Console.eval(System.getenv('JS_PLUS_PATH') + '/test/TestAll.js');
+Console.eval(System.getenv('JS_PLUS_PATH') + '/../test/TestAll.js');
 /
 ```
 
