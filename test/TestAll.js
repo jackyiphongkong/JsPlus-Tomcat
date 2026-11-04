@@ -108,7 +108,7 @@ function checkTomcatConfig() {
         ["IpFilter.enable", "true"],
         ["IpFilter.cacheSeconds", "0"],
         ["IpAttackDefense.enable", "true"],
-        ["IpAttackDefense.ruleCacheSeconds", "0"],
+        ["IpAttackDefense.cacheSeconds", "0"],
         ["DomainProxy.enable", "true"]
     ];
     var content = "";

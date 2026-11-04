@@ -130,7 +130,7 @@
 		<echo file="${jr.changelog.zh}"
 			message="# JsPlus-Tomcat 建置歷史${line.separator}# 格式：版本  時間  備註${line.separator}#${line.separator}" />
 	</target>
-	<target name="build-init" depends="build-init-en,build-init-zh" />
+	<target name="build-init" depends="build-init-en" />
 
 	<!-- Replace the ${BuildVersion.VERSION}(${BuildVersion.BUILD_DATE})
 	     placeholders in TomcatServer.java with the real build values before
@@ -211,8 +211,6 @@
 			<format property="jr.changelog.ts" pattern="yyyy-MM-dd HH:mm:ss" />
 		</tstamp>
 		<echo append="true" file="${jr.changelog}"
-			message="v${jr.version}  ${jr.changelog.ts}  ${jr.changenote}${line.separator}" />
-		<echo append="true" file="${jr.changelog.zh}"
 			message="v${jr.version}  ${jr.changelog.ts}  ${jr.changenote}${line.separator}" />
 	</target>
 
