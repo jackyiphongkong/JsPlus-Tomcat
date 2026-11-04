@@ -10,7 +10,7 @@ if defined ANT_HOME set "ANT_HOME_ORIG=%ANT_HOME%"
 
 REM --- StopAll: kill any java process holding this project's jars ---
 echo Stopping running JsPlus-Tomcat processes...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%BIN_PATH_ORIGIN%stopall.ps1"
+call "%BIN_PATH_ORIGIN%JsPlus\bin\StopAll.bat"
 powershell -NoProfile -Command "Start-Sleep 2" >nul
 
 SET JAVA_HOME=%BIN_PATH%/Java/default/

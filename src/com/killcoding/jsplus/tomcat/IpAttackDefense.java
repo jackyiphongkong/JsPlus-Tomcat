@@ -518,7 +518,7 @@ public class IpAttackDefense implements Filter {
 
     /** Active defense rules from {@code ip_defense_rule} (cached). */
     private static List<Map<String, Object>> getDefenseRules() throws Exception {
-        Integer cacheSeconds = config.getInteger("IpAttackDefense.ruleCacheSeconds", 60);
+        Integer cacheSeconds = config.getInteger("IpAttackDefense.cacheSeconds", 60);
         Object cached = Cache.get("IpAttackDefense.rules");
         if (cached != null) {
             return (List<Map<String, Object>>) cached;

@@ -644,6 +644,10 @@ public class TomcatServer {
 			setBaseAttributes();
 			addServiceConnectors();
 			addWebapps();
+			// Custom error page style — replaces Tomcat's default ErrorReportValve
+			// for every 4xx/5xx produced by the container itself.
+			((org.apache.catalina.core.StandardHost) tomcat.getHost())
+					.setErrorReportValveClass(CustomErrorReportValve.class.getName());
 			initConsole();
 			if (proxyEnable) {
 				loadDomainMapping();
