@@ -8,6 +8,11 @@ SET "BIN_PATH=%BIN_PATH_ORIGIN:\=/%"
 if defined JAVA_HOME set "JAVA_HOME_ORIG=%JAVA_HOME%"
 if defined ANT_HOME set "ANT_HOME_ORIG=%ANT_HOME%"
 
+REM --- StopAll: kill any java process holding this project's jars ---
+echo Stopping running JsPlus-Tomcat processes...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%BIN_PATH_ORIGIN%stopall.ps1"
+powershell -NoProfile -Command "Start-Sleep 2" >nul
+
 SET JAVA_HOME=%BIN_PATH%/Java/default/
 
 SET ANT_HOME=%BIN_PATH%/Ant/default/

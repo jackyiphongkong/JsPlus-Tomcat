@@ -232,7 +232,7 @@ public class TomcatServer {
 				if (!CommonTools.isBlank(appBase)) {
 					Map<String, String> webapp = new HashMap<String, String>();
 					webapp.put("contextPath", contextPath);
-					webapp.put("appBase", appBase);
+					webapp.put("appBase", CommonTools.normalizePath(appBase));
 					webapps.add(webapp);
 				}
 			}
@@ -269,7 +269,7 @@ public class TomcatServer {
 			throw new IllegalArgumentException("The param 'keyAlias' is required.");
 		}
 		hostname = hostname.toLowerCase();
-		File keystoreFileAbs = new File(String.format("%s/%s", keyRoot, _keystoreFile));
+		File keystoreFileAbs = new File(CommonTools.normalizePath(String.format("%s/%s", keyRoot, _keystoreFile)));
 		if (keystoreFileAbs.exists()) {
 			SSLHostConfig newHostConfig = new SSLHostConfig();
 			newHostConfig.setHostName(hostname);
@@ -312,9 +312,9 @@ public class TomcatServer {
 			String _keystorePass = (String) keystorePass.get(i);
 			String _keyAlias = (String) keyAlias.get(i);
 
-			File keystoreFileAbs = new File(_keystoreFile);
+			File keystoreFileAbs = new File(CommonTools.normalizePath(_keystoreFile));
 			if (!keystoreFileAbs.exists()) {
-				keystoreFileAbs = new File(String.format("%s/key/%s", TOMCAT_HOME, _keystoreFile));
+				keystoreFileAbs = new File(CommonTools.normalizePath(String.format("%s/key/%s", TOMCAT_HOME, _keystoreFile)));
 			}
 			if (!keystoreFileAbs.exists()) {
 				log.warn("Keystore not found, skipped: {}", _keystoreFile);
@@ -354,9 +354,9 @@ public class TomcatServer {
 		loadSSLHost(sslHostConfig);
 
 		if (!CommonTools.isBlank(truststoreFile)) {
-			File truststoreFileAbs = new File(truststoreFile);
+			File truststoreFileAbs = new File(CommonTools.normalizePath(truststoreFile));
 			if (!truststoreFileAbs.exists()) {
-				truststoreFileAbs = new File(String.format("%s/%s", this.keyRoot, truststoreFile));
+				truststoreFileAbs = new File(CommonTools.normalizePath(String.format("%s/%s", this.keyRoot, truststoreFile)));
 			}
 			if (truststoreFileAbs.exists()) {
 				sslHostConfig.setTruststoreFile(truststoreFileAbs.getAbsolutePath());
@@ -431,7 +431,7 @@ public class TomcatServer {
 	/** Applies JVM/Tomcat system attributes from the config to a connector. */
 	private void setAttributes(Connector _Connector) {
 		try {
-			File attsFile = new File(String.format("%s/config/Attributes.properties", TOMCAT_HOME));
+			File attsFile = new File(CommonTools.normalizePath(String.format("%s/config/Attributes.properties", TOMCAT_HOME)));
 			if (attsFile.exists()) {
 				ConfigProperties prop = new ConfigProperties();
 				// Applies every attribute from Attributes.properties onto the connector.
@@ -471,7 +471,7 @@ public class TomcatServer {
 			System.out.println("TOMCAT_HOME: " + System.getProperty("TOMCAT_HOME"));
 			System.out.println("TOMCAT_PID: " + System.getProperty("TOMCAT_PID"));
 			Logger.systemInfo(TomcatServer.class, "SystemProperties: {}", System.getProperties());
-			File tomcatConfigFile = new File(String.format("%s/config/Tomcat.properties", TOMCAT_HOME));
+			File tomcatConfigFile = new File(CommonTools.normalizePath(String.format("%s/config/Tomcat.properties", TOMCAT_HOME)));
 			if (tomcatConfigFile.exists()) {
 				ConfigProperties cp = new ConfigProperties();
 				// Copies every Tomcat.properties entry into the startup params map.
@@ -482,7 +482,7 @@ public class TomcatServer {
 						for (String tccpKey : tomcatCpKeys) {
 							String tccpVal = cp.getString(tccpKey, "");
 							params.put(tccpKey, tccpVal);
-							Logger.systemMark(TomcatServer.class, "Param: {}={}", tccpKey, tccpVal);
+							Logger.systemDebug(TomcatServer.class, "Param: {}={}", tccpKey, tccpVal);
 						}
 						TomcatScriptConsole.setPoolSize(cp.getInteger("TomcatScriptConsole.poolSize", 1000));
 						TomcatScriptConsole.setCacheSeconds(cp.getInteger("TomcatScriptConsole.cacheSeconds", 60));
@@ -552,6 +552,7 @@ public class TomcatServer {
 
 	/** Starts the server asynchronously (entry point for the JS console). */
 	public void start(Map<String, String> params) {
+		Logger.systemMark(TomcatServer.class, "Version: {}", VERSION);
 		ExecutorService exec = lifecycleExecutor();
 		// Runs the full synchronous start on the shared lifecycle executor.
 		exec.execute(new Runnable() {
@@ -662,7 +663,7 @@ public class TomcatServer {
 		tomcat = new Tomcat();
 		tomcat.setPort(port);
 		tomcat.setHostname(hostname);
-		String _tmpDir = new File(String.format("%s/.tmp/%s/", tmpDir, port)).getAbsolutePath();
+		String _tmpDir = CommonTools.normalizePath(String.format("%s/.tmp/%s/", tmpDir, port));
 		tomcat.setBaseDir(_tmpDir);
 
 		connector = new Connector();
@@ -757,7 +758,7 @@ public class TomcatServer {
 		for (Map<String, String> webapp : webapps) {
 			log.mark("Starting: {} -> {}", webapp.get("contextPath"), webapp.get("appBase"));
 			addWebappContext(webapp.get("contextPath"), webapp.get("appBase"));
-			log.info(String.format("Start Webapp: http://localhost:%d/%s --> %s", port, webapp.get("contextPath"),
+			log.info(String.format("Start Webapp: http://localhost:%d%s --> %s", port, webapp.get("contextPath"),
 					webapp.get("appBase")));
 		}
 	}
@@ -786,7 +787,7 @@ public class TomcatServer {
 	/** Creates a temporary empty ROOT webapp base (used when no Webapp is configured). */
 	private String createTemporaryRootAppBase() {
 		String tmp = System.getProperty("java.io.tmpdir");
-		String base = tmp + File.separator + "jsplus-tomcat-tmp-root";
+		String base = CommonTools.normalizePath(tmp + File.separator + "jsplus-tomcat-tmp-root");
 		File dir = new File(base);
 		if (!dir.exists()) {
 			dir.mkdirs();
@@ -801,7 +802,7 @@ public class TomcatServer {
 		}
 		String[] jarResourcePaths = jarResourcePath.split(",|;");
 		for (String jarResPath : jarResourcePaths) {
-			File jrp = new File(jarResPath);
+			File jrp = new File(CommonTools.normalizePath(jarResPath));
 			if (!jrp.exists()) {
 				continue;
 			}
@@ -827,7 +828,7 @@ public class TomcatServer {
 		if (classesPath == null) {
 			return;
 		}
-		File classesPathFile = new File(classesPath);
+		File classesPathFile = new File(CommonTools.normalizePath(classesPath));
 		if (classesPathFile.exists()) {
 			resources.addPreResources(new DirResourceSet(resources, "/WEB-INF/classes", classesPath, "/"));
 		}
@@ -838,7 +839,7 @@ public class TomcatServer {
 		if (webResourcePath == null || webResourceMount == null) {
 			return;
 		}
-		File webResourcePathFile = new File(webResourcePath);
+		File webResourcePathFile = new File(CommonTools.normalizePath(webResourcePath));
 		if (webResourcePathFile.exists() && webResourceMount.startsWith("/")) {
 			resources.addPreResources(new DirResourceSet(resources, webResourceMount, webResourcePath, "/"));
 		}

@@ -71,6 +71,19 @@ fi
 echo "Using \"$JvmParams\""
 
 # ------------------------------------------------------------------
+# Step -1: Clean previous run artifacts (align with TestAll.bat).
+#   JsPlus/.tmp/*  — transient JS console / compiled caches from the prior run
+#   logs/*         — app logs from the prior run (so this run's log is fresh)
+# ------------------------------------------------------------------
+echo "[TestAll] Cleaning JsPlus/.tmp/* and logs/* ..."
+if [ -d "${JS_PLUS_PATH}.tmp" ]; then
+    rm -rf "${JS_PLUS_PATH}.tmp"/*
+fi
+if [ -d "${JS_PLUS_PATH}../logs" ]; then
+    rm -rf "${JS_PLUS_PATH}../logs"/*
+fi
+
+# ------------------------------------------------------------------
 # Step 0: Stop any existing services (H2 / Tomcat / consoles) so the
 # database file is unlocked and ports $H2_PORT/8080 are free.
 # ------------------------------------------------------------------

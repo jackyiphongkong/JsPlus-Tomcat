@@ -160,12 +160,12 @@ public class ServerLog {
                         String dateStr = df.format(currentTime);
                         File webLogFile = null;
                         if (CommonTools.isBlank(folderPath)) {
-                            webLogFile = new File(String.format("%s/WebLog/%s.csv",
-                                    CommonTools.getJarPath(ServerLog.class), dateStr));
+                            webLogFile = new File(CommonTools.normalizePath(String.format("%s/WebLog/%s.csv",
+                                    CommonTools.getJarPath(ServerLog.class), dateStr)));
                         } else {
-                            webLogFile = new File(String.format("%s/%s.csv", folderPath, dateStr));
+                            webLogFile = new File(CommonTools.normalizePath(String.format("%s/%s.csv", folderPath, dateStr)));
                         }
-                        File webLogFolder = new File(webLogFile.getParent());
+                        File webLogFolder = new File(CommonTools.normalizePath(webLogFile.getParent()));
 
                         if (webLogFolder.exists()) {
                             if (!webLogFolder.canWrite())
@@ -278,8 +278,8 @@ public class ServerLog {
             String msg) throws Exception {
         String backupLogFileName = String.format("%s/%s.%s.csv", logFolder.getAbsolutePath(), logFileNamePrefix,
                 logIndex);
-        Path source = Paths.get(logFile.getAbsolutePath());
-        Path target = Paths.get(backupLogFileName);
+        Path source = Paths.get(CommonTools.normalizePath(logFile.getAbsolutePath()));
+        Path target = Paths.get(CommonTools.normalizePath(backupLogFileName));
         Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
         FileTools.write(logFile, String.format("%s%s", header, msg), false);
     }
@@ -292,7 +292,7 @@ public class ServerLog {
         Integer maxBackupIndex = configProperties.getInteger("MaxBackupIndex", 10);
         for (int i = 1; i <= maxBackupIndex; i++) {
             String logFileName = String.format("%s/%s.%s.%s", folder.getAbsolutePath(), prefix, i, suffix);
-            File logFile = new File(logFileName);
+            File logFile = new File(CommonTools.normalizePath(logFileName));
             if (!logFile.exists())
                 return i;
         }

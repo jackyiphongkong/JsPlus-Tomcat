@@ -268,7 +268,7 @@ public class DomainProxy implements Filter {
 
 			String target = domainCp.getString("target");
 			if (CommonTools.isBlank(target)) {
-				safeSendError(response, 502, "Target domain not found.");
+				safeSendError(request,response, 502, "Target domain not found.");
 				return;
 			}
 
@@ -287,12 +287,12 @@ public class DomainProxy implements Filter {
 			if ("internal".equalsIgnoreCase(mode)) {
 				String targetPath = targetPathOf(target);
 				if (targetPath == null) {
-					safeSendError(response, 502, "Internal target not found: " + target);
+					safeSendError(request, response, 502, "Internal target not found: " + target);
 					return;
 				}
 				ServletContext targetCtx = request.getServletContext().getContext(targetPath);
 				if (targetCtx == null) {
-					safeSendError(response, 404, "Internal target webapp not deployed: " + targetPath);
+					safeSendError(request, response, 404, "Internal target webapp not deployed: " + targetPath);
 					return;
 				}
 				String rest = stripMappingPrefix(matchedUri, request.getRequestURI());
@@ -342,7 +342,7 @@ public class DomainProxy implements Filter {
 				};
 				RequestDispatcher rd = targetCtx.getRequestDispatcher(dispatchPath);
 				if (rd == null) {
-					safeSendError(response, 404, "Internal target resource not found: " + targetPath + rest);
+					safeSendError(request, response, 404, "Internal target resource not found: " + targetPath + rest);
 					return;
 				}
 				rd.forward(rewritten, response);
@@ -359,19 +359,19 @@ public class DomainProxy implements Filter {
 			int maxBodyBytes = 10 * 1024 * 1024;
 			try (InputStream is = request.getInputStream()) {
 				if (request.getContentLengthLong() > maxBodyBytes) {
-					safeSendError(response, HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE, "Request body too large.");
+					safeSendError(request, response, HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE, "Request body too large.");
 					return;
 				}
 				bodyBytes = is.readNBytes(maxBodyBytes + 1);
 				if (bodyBytes.length > maxBodyBytes) {
-					safeSendError(response, HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE, "Request body too large.");
+					safeSendError(request, response, HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE, "Request body too large.");
 					return;
 				}
 			}
 			HttpRequest.Builder builder = buildForwardRequest(domainCp, request, forwardUrl, bodyBytes);
 
 			if (!"Forward".equalsIgnoreCase(mode) && !"Redirect".equalsIgnoreCase(mode)) {
-				safeSendError(response, 502, "No action");
+				safeSendError(request, response, 502, "No action");
 				return;
 			}
 			if ("Redirect".equalsIgnoreCase(mode)) {
@@ -388,11 +388,12 @@ public class DomainProxy implements Filter {
 			long spend = System.currentTimeMillis() - begin;
 			ServerLog.writeWebLog(domain, port, request.getRequestURI(), "response", System.currentTimeMillis(), request.getQueryString(), ServerLog.getHeaders(request), String.format("spend=%s;buferSize=%s;contentType=%s", Long.valueOf(spend), Integer.valueOf(response.getBufferSize()), response.getContentType()),request.getRemoteAddr());
 		} catch (InterruptedException e) {
-			this.log.error(e.getMessage(), e);
+			log.error("Forward interrupted: {}:{}{} remote={}",
+					domain, port, request.getRequestURI(), request.getRemoteAddr());
 			long spend2 = System.currentTimeMillis() - begin;
 			ServerLog.writeWebLog(domain, port, request.getRequestURI(), "error", System.currentTimeMillis(), request.getQueryString(), ServerLog.getHeaders(request), String.format("spend=%s;buferSize=%s;contentType=%s", Long.valueOf(spend2), Integer.valueOf(response.getBufferSize()), response.getContentType()),request.getRemoteAddr());
 			Thread.currentThread().interrupt();
-			safeSendError(response, 502, "Proxy interrupted.");
+			safeSendError(request, response, 502, "Proxy interrupted.");
 		} catch (Exception e2) {
 			// Client abort (HTTP/2 RST, broken pipe, connection reset) while
 			// writing the response: there is no one left to receive an error
@@ -401,10 +402,15 @@ public class DomainProxy implements Filter {
 				log.debug("Client aborted request: {}", e2.getMessage());
 				return;
 			}
-			this.log.error(e2.getMessage(), e2);
+			String reason = e2.getClass().getSimpleName();
+			if (e2.getMessage() != null && !e2.getMessage().isEmpty()) {
+				reason += ": " + e2.getMessage();
+			}
+			log.error("Forward failed: {}:{}{} remote={} reason={}",
+					domain, port, request.getRequestURI(), request.getRemoteAddr(), reason);
 			long spend3 = System.currentTimeMillis() - begin;
 			ServerLog.writeWebLog(domain, port, request.getRequestURI(), "error", System.currentTimeMillis(), request.getQueryString(), ServerLog.getHeaders(request), String.format("spend=%s;buferSize=%s;contentType=%s", Long.valueOf(spend3), Integer.valueOf(response.getBufferSize()), response.getContentType()),request.getRemoteAddr());
-			safeSendError(response, 502, "Server Error.");
+			safeSendError(request, response, 502, "Server Error.");
 		} finally {
 			// B2 fix: always return the console taken by putConsoleParams() on
 			// every code path (no mapping / target blank / internal / redirect /
@@ -757,19 +763,22 @@ public class DomainProxy implements Filter {
 		}
 	}
 	/** Sends an HTTP error without leaking stack traces to the client. */
-    private void safeSendError(HttpServletResponse response, int code, String msg) throws IOException {
+    private void safeSendError(HttpServletRequest request, HttpServletResponse response, int code, String msg) throws IOException {
         if (!response.isCommitted()) {
             boolean errorRedirectEnable = config.getBoolean("errorRedirectEnable", false).booleanValue();
             if (errorRedirectEnable) {
                 // B16 fix: never crash the request path on a mis-configured
                 // errorRedirectUrl (a template without %s, or with a foreign
                 // format spec, used to throw IllegalFormatConversionException).
-                String errorRedirectTpl = config.getString("errorRedirectUrl", "http://errorRedirectUrl/%s.html");
+                String errorRedirectTpl = config.getString("errorRedirectUrl", "http://errorRedirectUrl/{ErrorCode}.html");
                 String errorRedirectUrl;
+				StringBuffer requestUrl;
                 try {
-                    errorRedirectUrl = String.format(errorRedirectTpl, code);
+					requestUrl = request.getRequestURL().append(request.getQueryString() != null ? "?" + request.getQueryString() : "");
+					errorRedirectUrl = errorRedirectTpl.replaceAll("\\{ErrorCode\\}", code + "").replaceAll("\\{RequestUrl\\}", requestUrl.toString());
                 } catch (IllegalFormatException ife) {
-                    errorRedirectUrl = errorRedirectTpl.replace("%s", code + "").replace("%d", code + "");
+                    log.error(ife.getMessage(), ife);
+					errorRedirectUrl = errorRedirectTpl.replaceAll("\\{ErrorCode\\}", code + "").replaceAll("\\{RequestUrl\\}", "");
                 }
                 response.setStatus(302);
                 response.setHeader("Location", errorRedirectUrl);
@@ -829,7 +838,7 @@ public class DomainProxy implements Filter {
 			return resMap;
         }
         if (!CommonTools.isBlank(scriptFile)) {
-			if(!new File(scriptFile).exists()){
+			if(!new File(CommonTools.normalizePath(scriptFile)).exists()){
 				resMap.put("code",0);
 				resMap.put("msg",String.format("The file '%s' does not exist.",scriptFile));
 				return resMap;

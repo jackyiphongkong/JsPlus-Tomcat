@@ -261,8 +261,8 @@ function cfgCheck(name, key, expected, command) {
 
 // Case C8
 cfgCheck("Webapp.appBase[0] key (renamed)", "Webapp.appBase[0]",
-    "${JS_PLUS_PATH}/webapps/default/",
-    "Webapp.appBase[0]=${JS_PLUS_PATH}/webapps/default/  (config)");
+    "${JS_PLUS_PATH}/../Webapps/default/",
+    "Webapp.appBase[0]=${JS_PLUS_PATH}/../Webapps/default/  (config)");
 
 // Regression guard: the OLD bare keys must NOT exist anymore.
 
@@ -567,8 +567,8 @@ cfgCheck("Webapp.contextPath[1] key (/default)", "Webapp.contextPath[1]",
 
 // Case C36 — Webapp.appBase[1] must point at webapps/default/.
 cfgCheck("Webapp.appBase[1] key (webapps/default)", "Webapp.appBase[1]",
-    "${JS_PLUS_PATH}/webapps/default/",
-    "Webapp.appBase[1]=${JS_PLUS_PATH}/webapps/default/  (config)");
+    "${JS_PLUS_PATH}/../Webapps/default/",
+    "Webapp.appBase[1]=${JS_PLUS_PATH}/../Webapps/default/  (config)");
 
 // ---------------------------------------------------------------------------
 // Summary

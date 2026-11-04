@@ -4,6 +4,13 @@ set -e
 BIN_PATH_ORIGIN="$(cd "$(dirname "$0")" && pwd)/"
 BIN_PATH="${BIN_PATH_ORIGIN//\\//}"
 
+# --- StopAll: kill any java process holding this project's jars ---
+# Match only processes whose classpath points at THIS project's LibHome
+# (JsPlus-Tomcat/LibHome), so other projects are untouched.
+echo "Stopping running JsPlus-Tomcat processes..."
+pkill -f "JsPlus-Tomcat/LibHome" 2>/dev/null || true
+sleep 2
+
 JAVA_HOME_ORIG="${JAVA_HOME:-}"
 ANT_HOME_ORIG="${ANT_HOME:-}"
 

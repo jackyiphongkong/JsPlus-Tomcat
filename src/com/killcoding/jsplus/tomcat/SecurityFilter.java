@@ -144,7 +144,7 @@ public class SecurityFilter implements Filter {
             LOG.error(e.getMessage(), e);
             ServerLog.writeWebLog(domain, port, request.getRequestURI(), "error", System.currentTimeMillis(),
                     request.getQueryString(), ServerLog.getHeaders(request), null,request.getRemoteAddr());
-            safeSendError(response, 500, "Server Error.");
+            safeSendError(request,response, 500, "Server Error.");
         }
     }
 
@@ -1070,22 +1070,26 @@ public class SecurityFilter implements Filter {
     }
 
     /** Sends an HTTP error without leaking stack traces. */
-    private void safeSendError(HttpServletResponse response, int code, String msg) throws IOException {
+    private void safeSendError(HttpServletRequest request, HttpServletResponse response, int code, String msg) throws IOException {
         if (!response.isCommitted()) {
             boolean errorRedirectEnable = config.getBoolean("errorRedirectEnable", false);
             if (errorRedirectEnable) {
                 // B16 fix: never crash the request path on a mis-configured
                 // errorRedirectUrl (a template without %s, or with a foreign
                 // format spec, used to throw IllegalFormatConversionException).
-                String errorRedirectTpl = config.getString("errorRedirectUrl", "http://errorRedirectUrl/%s.html");
+                String errorRedirectTpl = config.getString("errorRedirectUrl", "http://errorRedirectUrl/{ErrorCode}.html");
                 String errorRedirectUrl;
+				StringBuffer requestUrl;
                 try {
-                    errorRedirectUrl = String.format(errorRedirectTpl, code + "");
+					requestUrl = request.getRequestURL().append(request.getQueryString() != null ? "?" + request.getQueryString() : "");
+					errorRedirectUrl = errorRedirectTpl.replaceAll("\\{ErrorCode\\}", code + "").replaceAll("\\{RequestUrl\\}", requestUrl.toString());
                 } catch (IllegalFormatException ife) {
-                    errorRedirectUrl = errorRedirectTpl.replace("%s", code + "").replace("%d", code + "");
+                    LOG.error(ife.getMessage(), ife);
+					errorRedirectUrl = errorRedirectTpl.replaceAll("\\{ErrorCode\\}", code + "").replaceAll("\\{RequestUrl\\}", "");
                 }
                 response.setStatus(302);
                 response.setHeader("Location", errorRedirectUrl);
+                return;
             } else {
                 response.sendError(code, msg);
             }

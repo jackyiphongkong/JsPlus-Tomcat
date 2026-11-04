@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>504 Gateway Timeout - JsPlus-Tomcat</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #262626;
+  }
+  .container {
+    max-width: 600px;
+    padding: 40px 20px;
+    text-align: center;
+  }
+  .code {
+    font-size: 48px;
+    font-weight: 600;
+    margin: 0 0 16px 0;
+    color: #262626;
+  }
+  .title {
+    font-size: 20px;
+    font-weight: 400;
+    margin: 0 0 12px 0;
+    color: #262626;
+  }
+  .desc {
+    font-size: 14px;
+    line-height: 1.5;
+    color: #8e8e8e;
+    margin: 0 0 24px 0;
+  }
+  a {
+    color: #0095f6;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="container">
+  <p class="code">504</p>
+  <p class="title">Gateway Timeout</p>
+  <p class="desc">The server did not receive a timely response from an upstream server.</p>
+  <p><a id="retry-link" href="javascript:history.back()">&larr; Try Again</a></p>
+</div>
+<script>
+(function() {
+  var params = new URLSearchParams(window.location.search);
+  var requestUrl = params.get('RequestUrl');
+  if (requestUrl) {
+    document.getElementById('retry-link').href = requestUrl;
+  }
+})();
+</script>
+</body>
+</html>

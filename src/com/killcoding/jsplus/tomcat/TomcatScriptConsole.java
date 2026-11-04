@@ -259,12 +259,12 @@ public class TomcatScriptConsole {
 
 	/** Evaluates a script file by path (content cached). */
 	public static Object eval(String scriptPath) throws Exception {
-		return eval(new File(scriptPath), getCacheSeconds());
+		return eval(new File(CommonTools.normalizePath(scriptPath)), getCacheSeconds());
 	}
 
 	/** Evaluates a script file by path with an explicit cache lifetime. */
 	public static Object eval(String scriptPath, int cacheLifeSec) throws Exception {
-		return eval(new File(scriptPath), cacheLifeSec);
+		return eval(new File(CommonTools.normalizePath(scriptPath)), cacheLifeSec);
 	}
 
 	/**
@@ -396,7 +396,7 @@ public class TomcatScriptConsole {
 				return null;
 			}
 			String scriptPath = String.format("%s/%s", getAppScriptPath(),customScriptFile);
-			File scrptFile = new File(scriptPath);
+			File scrptFile = new File(CommonTools.normalizePath(scriptPath));
 			if (checkExists(scrptFile)) {
 				log.debug("Loaded: {}", scriptPath);
 				eval(scrptFile);
@@ -438,7 +438,7 @@ public class TomcatScriptConsole {
 				return null;
 			}
 			String scriptPath = String.format("%s/%s", getAppScriptPath(),customScriptFile);
-			File scrptFile = new File(scriptPath);
+			File scrptFile = new File(CommonTools.normalizePath(scriptPath));
 			if (checkExists(scrptFile)) {
 				log.debug("Loaded: {}", scriptPath);
 				eval(scrptFile);
@@ -472,7 +472,7 @@ public class TomcatScriptConsole {
 				return null;
 			}
 			String scriptPath = String.format("%s/%s", getAppScriptPath(), customScriptFile);
-			File scrptFile = new File(scriptPath);
+			File scrptFile = new File(CommonTools.normalizePath(scriptPath));
 			if (checkExists(scrptFile)) {
 				log.debug("Loaded: {}", scriptPath);
 				eval(scrptFile);
