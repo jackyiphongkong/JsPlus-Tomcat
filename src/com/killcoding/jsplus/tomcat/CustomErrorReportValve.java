@@ -6,7 +6,6 @@ import org.apache.catalina.valves.ErrorReportValve;
 
 import java.io.IOException;
 import java.io.Writer;
-import java.util.Locale;
 
 /**
  * Custom ErrorReportValve — replaces Tomcat's default error page HTML with
