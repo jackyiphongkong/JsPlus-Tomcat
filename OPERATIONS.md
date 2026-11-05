@@ -1,48 +1,48 @@
-# JsPlus-Tomcat 操作手冊
+# JsPlus-Tomcat Operations Manual
 
-## 目錄
-1. [項目簡介](#1-項目簡介)
-2. [環境要求](#2-環境要求)
-3. [建置與啟動](#3-建置與啟動)
-4. [配置說明](#4-配置說明)
-5. [功能模組](#5-功能模組)
-6. [JS Console API（TomcatEmbed.js）](#6-js-console-apitomcatembedjs)
-7. [測試](#7-測試)
-8. [Release 流程](#8-release-流程)
-9. [除錯與日誌](#9-除錯與日誌)
-
----
-
-## 1. 項目簡介
-
-JsPlus-Tomcat 係一個輕量級嵌入式 Tomcat 反向代理與安全防禦伺服器，基於 JsPlus（GraalVM JS）平台運行。主要功能：
-
-- 嵌入式 Tomcat 伺服器（HTTP/HTTPS/HTTP2）
-- IP 過濾器（allow/deny 規則）
-- IP 攻擊防禦（自動封禁異常 IP）
-- Security Filter（請求安全檢查）
-- Domain Proxy（反向代理 / 內部轉發）
-- 自訂錯誤頁（CustomErrorReportValve）
-- H2 嵌入式數據庫
-- Script Console（JS 控制台）
+## Table of Contents
+1. [Project Overview](#1-project-overview)
+2. [System Requirements](#2-system-requirements)
+3. [Build & Startup](#3-build--startup)
+4. [Configuration](#4-configuration)
+5. [Feature Modules](#5-feature-modules)
+6. [JS Console API (TomcatEmbed.js)](#6-js-console-api-tomcatembedjs)
+7. [Testing](#7-testing)
+8. [Release Process](#8-release-process)
+9. [Troubleshooting & Logs](#9-troubleshooting--logs)
 
 ---
 
-## 2. 環境要求
+## 1. Project Overview
 
-| 項目 | 要求 |
+JsPlus-Tomcat is a lightweight embedded Tomcat reverse-proxy and security-defense server built on the JsPlus (GraalVM JS) platform. Key features:
+
+- Embedded Tomcat server (HTTP / HTTPS / HTTP2)
+- IP Filter (allow/deny rules)
+- IP Attack Defense (auto-ban malicious IPs)
+- Security Filter (request security checks)
+- Domain Proxy (reverse proxy / internal forward)
+- Custom Error Pages (CustomErrorReportValve)
+- H2 embedded database
+- Script Console (JS console)
+
+---
+
+## 2. System Requirements
+
+| Item | Requirement |
 |---|---|
-| Java | JDK 17+（建議 21） |
+| Java | Oracle GraalVM 25+ |
 | Ant | 1.10+ |
-| 操作系統 | Windows / Linux / macOS |
-| 記憶體 | 最低 512MB |
-| 磁碟空間 | 500MB |
+| OS | Windows / Linux / macOS |
+| Memory | 512MB minimum |
+| Disk Space | 500MB |
 
 ---
 
-## 3. 建置與啟動
+## 3. Build & Startup
 
-### 3.1 建置
+### 3.1 Build
 
 ```bash
 # Windows
@@ -52,12 +52,12 @@ ant.bat
 ant.sh
 ```
 
-建置完成後，jar 會輸出到：
+After build, the jar is output to:
 ```
 LibHome/jsplus/default/jsplus-tomcat-<version>.jar
 ```
 
-### 3.2 啟動
+### 3.2 Start
 
 ```bash
 # Windows
@@ -67,7 +67,7 @@ JsPlus/bin/StartTomcat.bat
 JsPlus/bin/StartTomcat.sh
 ```
 
-### 3.3 停止
+### 3.3 Stop
 
 ```bash
 # Windows
@@ -77,15 +77,15 @@ JsPlus/bin/StopAll.bat
 JsPlus/bin/StopAll.sh
 ```
 
-> **注意**：強制殺 java process 後，必須先啟動 H2 ghost 再啟動 Tomcat，否則會 H2 connection refused。
+> **Note**: After forcibly killing the java process, you must start the H2 ghost first, then start Tomcat. Otherwise you'll get H2 connection refused.
 
 ---
 
-## 4. 配置說明
+## 4. Configuration
 
-配置文件：`JsPlus/config/Tomcat.properties`
+Config file: `JsPlus/config/Tomcat.properties`
 
-### 4.1 基本連接
+### 4.1 Basic Connectors
 
 ```properties
 port=8080
@@ -159,7 +159,7 @@ Webapp.appBase[1]=${JS_PLUS_PATH}/../Webapps/default/
 Webapp.appBase[2]=${JS_PLUS_PATH}/../Webapps/error/
 ```
 
-### 4.10 錯誤頁
+### 4.10 Error Pages
 
 ```properties
 errorRedirectEnable=true
@@ -168,37 +168,37 @@ errorRedirectUrl=https://testerror.com:8443/error/{ErrorCode}.html?RequestUrl={R
 
 ---
 
-## 5. 功能模組
+## 5. Feature Modules
 
 ### 5.1 IpFilter
 
-IP 過濾器，支援 allow/deny 規則。規則存儲於 H2 數據庫。
+IP filter with allow/deny rules. Rules are stored in the H2 database.
 
 ```javascript
-// 範例：查詢規則
-tomcat.listIpFilterRules();
+// Example: list rules
+tomcat.queryDomainIpRules();
 
-// 新增規則
-tomcat.addIpFilterRule({ip: "192.168.1.1", action: "allow"});
+// Example: add a rule
+tomcat.createDomainIpRule('example.com', '443', 'ALLOW', '192.168.1.1');
 ```
 
 ### 5.2 IpAttackDefense
 
-自動偵測並封禁異常 IP。可配置日誌保留時間與物理刪除時間。
+Automatically detects and bans malicious IPs. Configurable log retention and physical deletion windows.
 
 ### 5.3 SecurityFilter
 
-請求安全檢查，過濾惡意請求。
+Request security checks, filters out malicious requests.
 
 ### 5.4 DomainProxy
 
-反向代理 / 內部轉發。支援兩種模式：
+Reverse proxy / internal forward. Two modes:
 
-- **proxy**：外部反向代理，轉發到目標 URL
-- **internal**：內部 forward，轉發到本地 webapp
+- **proxy**: external reverse proxy, forwards to a target URL
+- **internal**: internal forward, forwards to a local webapp
 
 ```javascript
-// 範例：設定 domain mapping
+// Example: set a domain mapping
 tomcat.setDomainMapping('example.com', '443', {
   target: 'https://127.0.0.1:8443/default',
   scriptEnable: false
@@ -207,102 +207,102 @@ tomcat.setDomainMapping('example.com', '443', {
 
 ### 5.5 CustomErrorReportValve
 
-自訂錯誤頁，直接輸出 HTML（白底、居中、系統字體、Instagram 藍連結）。無需依賴 web.xml 或 /error/ webapp。
+Custom error page that directly outputs HTML (white background, centered, system font, Instagram-blue retry link). No dependency on web.xml or the /error/ webapp.
 
 ---
 
-## 6. JS Console API（TomcatEmbed.js）
+## 6. JS Console API (TomcatEmbed.js)
 
-經由 GraalVM JS 控制台（Script Console）呼叫，所有方法都掛喺全域 `tomcat` 物件上。
+Invoked via the GraalVM JS console (Script Console). All methods are mounted on the global `tomcat` object.
 
-### 6.1 Server 控制
+### 6.1 Server Control
 
-| 方法 | 說明 |
+| Method | Description |
 |---|---|
-| `tomcat.start()` | 啟動 Tomcat server |
-| `tomcat.stop()` | 停止 Tomcat server |
-| `tomcat.restart()` | 重啟（stop + start） |
-| `tomcat.getVersion()` | 取得版本號 |
-| `tomcat.getTomcatHome()` | 取得 Tomcat home 路徑 |
-| `tomcat.getTomcat()` | 取得底層 Tomcat 物件 |
-| `tomcat.getMemoryInfo()` | 取得記憶體資訊 |
-| `tomcat.loadParams(params)` | 載入參數 Map |
-| `tomcat.loadTomcatProps(params)` | 從 Tomcat.properties 載入參數 |
-| `tomcat.reloadSslHostConfig(hostName)` | 重載 SSL host config（唔傳參數則全部） |
+| `tomcat.start()` | Start the Tomcat server |
+| `tomcat.stop()` | Stop the Tomcat server |
+| `tomcat.restart()` | Restart (stop + start) |
+| `tomcat.getVersion()` | Get version number |
+| `tomcat.getTomcatHome()` | Get Tomcat home path |
+| `tomcat.getTomcat()` | Get the underlying Tomcat object |
+| `tomcat.getMemoryInfo()` | Get memory info |
+| `tomcat.loadParams(params)` | Load a params Map |
+| `tomcat.loadTomcatProps(params)` | Load params from Tomcat.properties |
+| `tomcat.reloadSslHostConfig(hostName)` | Reload SSL host config (all if no arg) |
 
-### 6.2 Domain Auth（SecurityFilter）
+### 6.2 Domain Auth (SecurityFilter)
 
-| 方法 | 說明 |
+| Method | Description |
 |---|---|
-| `tomcat.createDomainAuth(domain, port, authEnable)` | 建立 domain auth 設定 |
-| `tomcat.updateDomainAuth(domain, port, authEnable)` | 更新 domain auth 設定 |
-| `tomcat.removeDomainAuth(domain, port)` | 移除 domain auth 設定 |
-| `tomcat.queryDomainAuth(domain, port)` | 查詢單一 domain auth |
-| `tomcat.queryDomainAuths()` | 查詢全部 domain auth |
-| `tomcat.createDomainAuthUser(domain, port, username, plaintextPass)` | 建立 auth 使用者 |
-| `tomcat.updateDomainAuthUser(domain, port, username, plaintextPass)` | 更新 auth 使用者密碼 |
-| `tomcat.removeDomainAuthUser(domain, port, username)` | 移除 auth 使用者 |
-| `tomcat.queryDomainAuthUser(domain, port, username)` | 查詢單一 auth 使用者 |
-| `tomcat.queryDomainAuthUsers(domain, port)` | 查詢某 domain 全部使用者 |
-| `tomcat.setAuthLockPolicy(domain, port, maxAttempts, lockMinutes)` | 設定帳號鎖定策略 |
-| `tomcat.unlockAuthUser(domain, port, username)` | 解鎖被鎖定嘅使用者 |
+| `tomcat.createDomainAuth(domain, port, authEnable)` | Create a domain auth setting |
+| `tomcat.updateDomainAuth(domain, port, authEnable)` | Update a domain auth setting |
+| `tomcat.removeDomainAuth(domain, port)` | Remove a domain auth setting |
+| `tomcat.queryDomainAuth(domain, port)` | Query a single domain auth |
+| `tomcat.queryDomainAuths()` | Query all domain auths |
+| `tomcat.createDomainAuthUser(domain, port, username, plaintextPass)` | Create an auth user |
+| `tomcat.updateDomainAuthUser(domain, port, username, plaintextPass)` | Update an auth user's password |
+| `tomcat.removeDomainAuthUser(domain, port, username)` | Remove an auth user |
+| `tomcat.queryDomainAuthUser(domain, port, username)` | Query a single auth user |
+| `tomcat.queryDomainAuthUsers(domain, port)` | Query all users for a domain |
+| `tomcat.setAuthLockPolicy(domain, port, maxAttempts, lockMinutes)` | Set account-lock policy |
+| `tomcat.unlockAuthUser(domain, port, username)` | Unlock a locked user |
 
-### 6.3 Domain Mapping（DomainProxy）
+### 6.3 Domain Mapping (DomainProxy)
 
-| 方法 | 說明 |
+| Method | Description |
 |---|---|
-| `tomcat.setDomainMapping(domain, port, params)` | 設定 catch-all mapping（uri ""） |
-| `tomcat.setDomainMapping(domain, port, uri, params)` | 設定 uri 前綴特定 mapping |
-| `tomcat.removeDomainMapping(domain, port)` | 移除 catch-all mapping |
-| `tomcat.removeDomainMapping(domain, port, uri)` | 移除 uri 特定 mapping |
-| `tomcat.queryDomainMapping(domain, port)` | 查詢 catch-all mapping |
-| `tomcat.queryDomainMapping(domain, port, uri)` | 查詢 uri 特定 mapping |
-| `tomcat.queryDomainMappings()` | 查詢全部 mapping |
+| `tomcat.setDomainMapping(domain, port, params)` | Set catch-all mapping (uri "") |
+| `tomcat.setDomainMapping(domain, port, uri, params)` | Set uri-prefix-specific mapping |
+| `tomcat.removeDomainMapping(domain, port)` | Remove catch-all mapping |
+| `tomcat.removeDomainMapping(domain, port, uri)` | Remove uri-specific mapping |
+| `tomcat.queryDomainMapping(domain, port)` | Query catch-all mapping |
+| `tomcat.queryDomainMapping(domain, port, uri)` | Query uri-specific mapping |
+| `tomcat.queryDomainMappings()` | Query all mappings |
 
 ### 6.4 Domain SSL Host
 
-| 方法 | 說明 |
+| Method | Description |
 |---|---|
-| `tomcat.createDomainSslHost(hostname, keystoreFile, keystorePass, keyAlias)` | 建立 SSL host 設定（持久化到 DB） |
-| `tomcat.updateDomainSslHost(hostname, keystoreFile, keystorePass, keyAlias)` | 更新 SSL host 設定 |
-| `tomcat.removeDomainSslHost(hostname)` | 移除 SSL host 設定 |
-| `tomcat.queryDomainSslHost(hostname)` | 查詢單一 SSL host |
-| `tomcat.queryDomainSslHosts()` | 查詢全部 SSL host |
-| `tomcat.addSslHost(hostname, keystoreFile, keystorePass, keyAlias)` | 動態加入 SSL host（運行中） |
-| `tomcat.loadDomainSslHosts()` | 從 DB 載入全部 SSL host |
+| `tomcat.createDomainSslHost(hostname, keystoreFile, keystorePass, keyAlias)` | Persist an SSL host setting to DB |
+| `tomcat.updateDomainSslHost(hostname, keystoreFile, keystorePass, keyAlias)` | Update an SSL host setting |
+| `tomcat.removeDomainSslHost(hostname)` | Remove an SSL host setting |
+| `tomcat.queryDomainSslHost(hostname)` | Query a single SSL host |
+| `tomcat.queryDomainSslHosts()` | Query all SSL hosts |
+| `tomcat.addSslHost(hostname, keystoreFile, keystorePass, keyAlias)` | Dynamically add an SSL host (runtime) |
+| `tomcat.loadDomainSslHosts()` | Load all SSL hosts from DB |
 
 ### 6.5 IpFilter
 
-| 方法 | 說明 |
+| Method | Description |
 |---|---|
-| `tomcat.createDomainIpRule(domain, port, ruleType, ipPattern)` | 建立 catch-all IP 規則（ALLOW/DENY） |
-| `tomcat.createDomainIpRule(domain, port, uri, ruleType, ipPattern)` | 建立 uri 範圍 IP 規則 |
-| `tomcat.updateDomainIpRule(domain, port, ruleType, oldIpPattern, newIpPattern)` | 更新 catch-all IP 規則 |
-| `tomcat.updateDomainIpRule(domain, port, uri, ruleType, oldIpPattern, newIpPattern)` | 更新 uri 範圍 IP 規則 |
-| `tomcat.removeDomainIpRule(domain, port, ruleType, ipPattern)` | 移除 catch-all IP 規則 |
-| `tomcat.removeDomainIpRule(domain, port, uri, ruleType, ipPattern)` | 移除 uri 範圍 IP 規則 |
-| `tomcat.queryDomainIpRule(domain, port, ruleType, ipPattern)` | 查詢單一 IP 規則 |
-| `tomcat.queryDomainIpRules()` | 查詢全部 IP 規則 |
-| `tomcat.loadDomainIpRules()` | 從 DB 載入全部 IP 規則 |
+| `tomcat.createDomainIpRule(domain, port, ruleType, ipPattern)` | Create catch-all IP rule (ALLOW/DENY) |
+| `tomcat.createDomainIpRule(domain, port, uri, ruleType, ipPattern)` | Create uri-scoped IP rule |
+| `tomcat.updateDomainIpRule(domain, port, ruleType, oldIpPattern, newIpPattern)` | Update catch-all IP rule |
+| `tomcat.updateDomainIpRule(domain, port, uri, ruleType, oldIpPattern, newIpPattern)` | Update uri-scoped IP rule |
+| `tomcat.removeDomainIpRule(domain, port, ruleType, ipPattern)` | Remove catch-all IP rule |
+| `tomcat.removeDomainIpRule(domain, port, uri, ruleType, ipPattern)` | Remove uri-scoped IP rule |
+| `tomcat.queryDomainIpRule(domain, port, ruleType, ipPattern)` | Query a single IP rule |
+| `tomcat.queryDomainIpRules()` | Query all IP rules |
+| `tomcat.loadDomainIpRules()` | Load all IP rules from DB |
 
 ### 6.6 IpAttackDefense
 
-| 方法 | 說明 |
+| Method | Description |
 |---|---|
-| `tomcat.createDefenseRule(ruleName, domain, port, uriPattern, windowSeconds, threshold, banSeconds, enabled)` | 建立防禦規則 |
-| `tomcat.updateDefenseRule(ruleId, ruleName, domain, port, uriPattern, windowSeconds, threshold, banSeconds, enabled)` | 更新防禦規則 |
-| `tomcat.removeDefenseRule(ruleId)` | 移除防禦規則 |
-| `tomcat.queryDefenseRules()` | 查詢全部防禦規則 |
-| `tomcat.queryIpBans()` | 查詢全部被封鎖嘅 IP |
-| `tomcat.removeIpBan(domain, port, ip)` | 解除 IP 封鎖 |
-| `tomcat.queryIpRequestLogs()` | 查詢 IP 請求日誌 |
-| `tomcat.clearIpRequestLogs()` | 清空 IP 請求日誌 |
+| `tomcat.createDefenseRule(ruleName, domain, port, uriPattern, windowSeconds, threshold, banSeconds, enabled)` | Create a defense rule |
+| `tomcat.updateDefenseRule(ruleId, ruleName, domain, port, uriPattern, windowSeconds, threshold, banSeconds, enabled)` | Update a defense rule |
+| `tomcat.removeDefenseRule(ruleId)` | Remove a defense rule |
+| `tomcat.queryDefenseRules()` | Query all defense rules |
+| `tomcat.queryIpBans()` | Query all banned IPs |
+| `tomcat.removeIpBan(domain, port, ip)` | Unban an IP |
+| `tomcat.queryIpRequestLogs()` | Query IP request logs |
+| `tomcat.clearIpRequestLogs()` | Clear IP request logs |
 
 ---
 
-## 7. 測試
+## 7. Testing
 
-### 6.1 全量測試
+### 7.1 Full Test Suite
 
 ```bash
 # Windows
@@ -312,26 +312,26 @@ test/TestAll.bat
 test/TestAll.sh
 ```
 
-### 6.2 測試流程
+### 7.2 Test Flow
 
-1. StopAll（停止所有 java process）
-2. 清除 `JsPlus/.tmp/*` 同 `logs/*`
-3. ant.bat 建置
-4. 執行對應模組測試
-5. TestAll 全量測試
+1. StopAll (kill all java processes)
+2. Clean `JsPlus/.tmp/*` and `logs/*`
+3. Build via ant.bat
+4. Run module-specific tests
+5. Run TestAll end-to-end
 
-### 6.3 測試報告
+### 7.3 Test Report
 
-測試完成後，報告輸出到：
+After tests complete, the report is output to:
 ```
 docs/latest/report/TestAll-Report.html
 ```
 
 ---
 
-## 8. Release 流程
+## 8. Release Process
 
-### 8.1 建置
+### 8.1 Build
 
 ```bash
 ant.bat
@@ -343,44 +343,44 @@ ant.bat
 release.bat
 ```
 
-Release 會掃描同級目錄下所有 project，將新 jar 複製到已持有 `jsplus-tomcat-*.jar` 嘅 project 嘅 `LibHome/jsplus/default/`。
+Release scans all sibling project folders and copies the new jar into `LibHome/jsplus/default/` of every project that already holds a `jsplus-tomcat-*.jar`.
 
-舊 jar 會被重新命名為 `*.jar.bak`（唔會刪除）。
+Old jars are renamed to `*.jar.bak` (not deleted).
 
 ---
 
-## 9. 除錯與日誌
+## 9. Troubleshooting & Logs
 
-### 9.1 日誌位置
+### 9.1 Log Location
 
 ```
 JsPlus/logs/
 ```
 
-### 9.2 常見問題
+### 9.2 Common Issues
 
 #### H2 connection refused
 
-**原因**：強制殺 java process 後，H2 ghost process 都被殺。
+**Cause**: After forcibly killing the java process, the H2 ghost process is also killed.
 
-**解決**：先啟動 `StartH2.bat`，再啟動 `StartTomcat.bat`。
+**Fix**: Start `StartH2.bat` first, then `StartTomcat.bat`.
 
 #### 404 Not Found
 
-**原因**：Domain mapping 指向唔存在嘅 host 或路徑。
+**Cause**: Domain mapping points to a non-existent host or path.
 
-**解決**：檢查 `tomcat.queryDomainMapping(domain, port)` 嘅結果。
+**Fix**: Check `tomcat.queryDomainMapping(domain, port)` results.
 
-#### 錯誤頁唔係自訂風格
+#### Error page not in custom style
 
-**原因**：CustomErrorReportValve 未正確註冊。
+**Cause**: CustomErrorReportValve is not registered correctly.
 
-**解決**：確認 `TomcatServer.java` 有呼叫 `setErrorReportValveClass(CustomErrorReportValve.class.getName())`。
+**Fix**: Confirm `TomcatServer.java` calls `setErrorReportValveClass(CustomErrorReportValve.class.getName())`.
 
 ---
 
-## 附錄：版本歷史
+## Appendix: Version History
 
-| 版本 | 日期 | 備註 |
+| Version | Date | Notes |
 |---|---|---|
-| 8.0.103 | 2026-11-04 | CustomErrorReportValve + release.bat 對齊 |
+| 8.0.103 | 2026-11-04 | CustomErrorReportValve + release.bat alignment |
