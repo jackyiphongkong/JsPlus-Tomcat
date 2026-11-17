@@ -212,17 +212,21 @@ if (BOOTSTRAPPED) {
 }
 
 // ---- Config self-check (fail fast & visibly) ----
-var cfgCheck = checkTomcatConfig();
+// NOTE: the result must not be stored in a variable a suite also declares —
+// TestTomcatServer.js has a global `function cfgCheck(...)`, and a suite's
+// top-level declaration overwrites this shared scope, which made the report
+// print "FAIL: missing" with an empty list even though the check had passed.
+var configSelfCheck = checkTomcatConfig();
 var cfgLines = readConfigSnapshot();
 print("");
 print("=== Config self-check (Tomcat.properties) ===");
-if (cfgCheck.ok) {
+if (configSelfCheck.ok) {
     totalPass++;
     print("[PASS] filter config present (SecurityFilter/IpFilter/IpAttackDefense/DomainProxy)");
 } else {
     totalFail++;
-    allFailures.push("Config self-check - Tomcat.properties missing: " + cfgCheck.missing.join(", "));
-    print("[FAIL] filter config -> missing: " + cfgCheck.missing.join(", "));
+    allFailures.push("Config self-check - Tomcat.properties missing: " + configSelfCheck.missing.join(", "));
+    print("[FAIL] filter config -> missing: " + configSelfCheck.missing.join(", "));
 }
 
 // NOTE: loop variable must NOT be named `i`/`j` — suites load into the same
@@ -269,8 +273,8 @@ try {
     md += "Generated: " + new Date().toString() + "\n\n";
     md += "**" + totalPass + " passed / " + totalFail + " failed**\n\n";
     md += "## Config Self-Check\n\n"
-        + (totalFail === 0 ? "- PASS: filter config present (SecurityFilter/IpFilter/IpAttackDefense/DomainProxy)"
-                           : "- FAIL: missing " + (cfgCheck.missing || []).join(", ")) + "\n\n";
+        + (configSelfCheck.ok ? "- PASS: filter config present (SecurityFilter/IpFilter/IpAttackDefense/DomainProxy)"
+                           : "- FAIL: missing " + (configSelfCheck.missing || []).join(", ")) + "\n\n";
     if ((cfgLines || []).length > 0) {
         md += "## Config Snapshot (Tomcat.properties)\n\n```\n" + (cfgLines || []).join("\n") + "\n```\n\n";
     }
@@ -302,9 +306,9 @@ try {
         + "<div class=\"meta\">Generated: " + new Date().toString() + "</div>\n"
         + "<div class=\"" + (totalFail === 0 ? "summary-pass" : "summary-fail") + "\">" + totalPass + " passed / " + totalFail + " failed</div>\n"
         + "<h2>Config Self-Check</h2>\n"
-        + "<div class=\"" + (totalFail === 0 ? "summary-pass" : "summary-fail") + "\">"
-        + (totalFail === 0 ? "PASS: filter config present (SecurityFilter/IpFilter/IpAttackDefense/DomainProxy)"
-                           : "FAIL: missing " + (cfgCheck.missing || []).join(", ")) + "</div>\n";
+        + "<div class=\"" + (configSelfCheck.ok ? "summary-pass" : "summary-fail") + "\">"
+        + (configSelfCheck.ok ? "PASS: filter config present (SecurityFilter/IpFilter/IpAttackDefense/DomainProxy)"
+                           : "FAIL: missing " + (configSelfCheck.missing || []).join(", ")) + "</div>\n";
     if (cfgLines.length > 0) {
         html += "<h2>Config Snapshot (Tomcat.properties)</h2>\n<pre class=\"cfg\">";
         for (var cl = 0; cl < cfgLines.length; cl++) {
@@ -336,8 +340,8 @@ try {
         fail: totalFail,
         failures: allFailures,
         suiteTable: suiteResults,
-        configOk: totalFail === 0,
-        configMissing: cfgCheck.missing,
+        configOk: configSelfCheck.ok,
+        configMissing: configSelfCheck.missing,
         configLines: cfgLines,
         durationMs: Date.now() - testStart
     });

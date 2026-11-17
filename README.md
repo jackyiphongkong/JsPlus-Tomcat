@@ -87,7 +87,7 @@ A script engine may be passed as the first argument, e.g. `BG_StartTomcat.bat gr
 
 `DomainProxy.enable=false` (also the code default when the key is absent) skips the proxy servlet: the deployed webapps answer requests directly and the server behaves as a plain embedded-Tomcat web server. The auth filter stays registered either way. Additional connector attributes may be supplied through `JsPlus/config/Attributes.properties`, applied to every connector on reload.
 
-Additional connector controls, applied only when present (`-1` or blank keeps the Tomcat default): `maxConnections`, `asyncTimeout`, `connectionUploadTimeout`, `disableUploadTimeout`, `maxCookieCount`, `maxParameterCount`, `encoding`, `compressionEnable`, `compressableMimeType`, `compressionMinSize`.
+Additional connector controls, applied only when present (`-1` or blank keeps the Tomcat default): `maxConnections`, `maxHttpHeaderSize`, `asyncTimeout`, `connectionUploadTimeout`, `disableUploadTimeout`, `maxCookieCount`, `maxParameterCount`, `encoding`, `compressionEnable`, `compressableMimeType`, `compressionMinSize`. `maxHttpHeaderSize` (`65536` in the shipped config) raises the request/response header buffer from Tomcat's 8 KB default — proxied upstreams that return multi-KB header sets (long CSP headers) otherwise fail with `HeadersTooLargeException` on the response.
 
 ### `JsPlus/config/Appenv.properties`
 
@@ -96,6 +96,10 @@ Environment values such as `TOMCAT_PORT` and `H2_PORT` (default `3307`, override
 ### `JsPlus/config/DataSource.properties`
 
 H2 connection pool for `jdbc:h2:tcp://localhost:${H2_PORT}/tomcatdb`, user `sample_user`, password created by `dbscript/change.sql`.
+
+JsPlus-Core builds one pool **per properties file per JVM** (`DriverDataSource.of(File)`): every console of the `TomcatScriptConsole` pool and the database logger share this single pool, so `MaxPoolSize` (`100` here) caps the whole process, not one caller. Obtain the pool through `DriverDataSource.of(File)` — the `DriverDataSource(File)` constructor is protected in JsPlus-Core and cannot be called directly. Optional keys the current core understands: `Url[0]`…`Url[n]` (failover URL list), `SyncDataSource` (write-through data sources for read/write splitting), `StatusLogArchiveDays`, `MaxAveUsageSize`, `AbortMode`.
+
+`Timeout` is a **lease cap, not a borrow wait**: a borrowed connection still in use after `Timeout` seconds (`TransactionTimeout` when `autoCommit` is off) is aborted by the pool manager — `5m` here, so a stuck connection is recycled quickly instead of holding one of the 100 pool slots for hours. A full pool does not queue: `getConnection()` throws `99903 Full connection pool` immediately.
 
 ### Web logging (`WebLog.*`)
 

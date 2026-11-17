@@ -5,8 +5,10 @@ set -e
 ScriptDir="$(cd "$(dirname "$0")" && pwd)"
 AppRootDir="$(dirname "$ScriptDir")"
 
-# Convert to forward slash (already in Linux)
-Pattern="$AppRootDir"
+# Require the trailing separator: a sibling directory that merely starts with the
+# same name (.../JsPlus-Tomcat vs .../JsPlus-Tomcat-backup-20261024.git) must not
+# be matched.
+Pattern="${AppRootDir%/}/"
 
 echo "=============================================="
 echo "Application Root: $AppRootDir"

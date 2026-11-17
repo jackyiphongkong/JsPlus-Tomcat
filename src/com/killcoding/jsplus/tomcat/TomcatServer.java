@@ -129,6 +129,11 @@ public class TomcatServer {
 	protected Long connectionTimeout = -1L;
 	protected Long keepAliveTimeout = -1L;
 	protected Integer maxConnections = -1;
+	/** Request/response header buffer per connector. Upstreams with very large
+	 *  header sets (e.g. a wiki sending two multi-KB CSP headers) overflow the
+	 *  8 KB Tomcat default and surface as HeadersTooLargeException on proxied
+	 *  responses; -1 keeps the container default. */
+	protected Integer maxHttpHeaderSize = -1;
 	protected Long connectionUploadTimeout = -1L;
 	protected Boolean disableUploadTimeout = true;
 	protected Boolean reloadable = true;
@@ -184,6 +189,7 @@ public class TomcatServer {
 		this.connectionTimeout = paramsCp.getLong("connectionTimeout", -1L);
 		this.keepAliveTimeout = paramsCp.getLong("keepAliveTimeout", -1L);
 		this.maxConnections = paramsCp.getInteger("maxConnections", -1);
+		this.maxHttpHeaderSize = paramsCp.getInteger("maxHttpHeaderSize", -1);
 		this.disableUploadTimeout = paramsCp.getBoolean("disableUploadTimeout", true);
 		this.reloadable = paramsCp.getBoolean("reloadable", true);
 		this.connectionUploadTimeout = paramsCp.getLong("connectionUploadTimeout", -1L);
@@ -617,6 +623,10 @@ public class TomcatServer {
 
 		if (maxConnections > -1) {
 			applyToConnectors(c -> setAttribute(c, "maxConnections", maxConnections));
+		}
+
+		if (maxHttpHeaderSize > -1) {
+			applyToConnectors(c -> c.setProperty("maxHttpHeaderSize", maxHttpHeaderSize + ""));
 		}
 
 		if (connectionUploadTimeout > -1L) {

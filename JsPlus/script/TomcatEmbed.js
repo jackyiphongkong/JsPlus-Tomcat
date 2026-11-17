@@ -9,7 +9,6 @@ var LogRecord = Java.type("com.killcoding.log.LogRecord");
 var DiskFile = Java.type("com.killcoding.file.DiskFile");
 var Exception = Java.type("java.lang.Exception");
 var SimpleDateFormat = Java.type("java.text.SimpleDateFormat");
-var DriverDataSource = Java.type("com.killcoding.datasource.DriverDataSource");
 var System = Java.type("java.lang.System");
 var ScriptConsole = Java.type("com.killcoding.jsplus.ScriptConsole");
 var String = Java.type("java.lang.String");

@@ -459,6 +459,7 @@ function main() {
         try { return mk.getCanonicalPath().replace("\\", "/") + "/"; } catch (e) { return candidates[0]; }
     };
     var primaryDir = resolveReportDir([
+        (jppBase !== "" ? jppBase + "/../docs/latest/report/" : "../docs/latest/report/"),
         (jppBase !== "" ? jppBase + "/../../docs/latest/report/" : "../docs/latest/report/"),
         (jppBase !== "" ? jppBase + "/../../../docs/latest/report/" : "docs/latest/report/"),
         "../docs/latest/report/",

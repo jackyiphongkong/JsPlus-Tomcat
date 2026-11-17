@@ -87,7 +87,7 @@ https://localhost:8443       HTTPS，開發用自簽憑證位於 JsPlus\key\
 
 `DomainProxy.enable=false`（按鍵缺失時亦為程式碼預設）會跳過代理 servlet：由已部署的 webapp 直接回應請求，伺服器即等同單純的內嵌 Tomcat 網頁伺服器。認證過濾器不論模式與否都會註冊。額外連線器屬性可經 `JsPlus/config/Attributes.properties` 提供，重載時套用至所有連線器。
 
-其餘連線器控制項僅在設定時套用（`-1` 或留空則保留 Tomcat 預設）：`maxConnections`、`asyncTimeout`、`connectionUploadTimeout`、`disableUploadTimeout`、`maxCookieCount`、`maxParameterCount`、`encoding`、`compressionEnable`、`compressableMimeType`、`compressionMinSize`。
+其餘連線器控制項僅在設定時套用（`-1` 或留空則保留 Tomcat 預設）：`maxConnections`、`maxHttpHeaderSize`、`asyncTimeout`、`connectionUploadTimeout`、`disableUploadTimeout`、`maxCookieCount`、`maxParameterCount`、`encoding`、`compressionEnable`、`compressableMimeType`、`compressionMinSize`。`maxHttpHeaderSize`（隨附配置為 `65536`）把請求／回應標頭緩衝由 Tomcat 預設 8 KB 提高——被代理的上游若回傳多 KB 的標頭組（例如超長 CSP 標頭），否則回應會以 `HeadersTooLargeException` 失敗。
 
 ### `JsPlus/config/Appenv.properties`
 
@@ -96,6 +96,10 @@ https://localhost:8443       HTTPS，開發用自簽憑證位於 JsPlus\key\
 ### `JsPlus/config/DataSource.properties`
 
 `jdbc:h2:tcp://localhost:${H2_PORT}/tomcatdb` 的 H2 連線池，使用者 `sample_user`，密碼由 `dbscript/change.sql` 建立。
+
+JsPlus-Core 現在**每個 properties 檔在每個 JVM 只有一個連線池**（`DriverDataSource.of(File)`）：`TomcatScriptConsole` 池內所有 console 與資料庫日誌共用同一個池，因此 `MaxPoolSize`（此處 `100`）限制的是整個行程，而非單一呼叫者。取得連線池必須經 `DriverDataSource.of(File)` —— `DriverDataSource(File)` 建構子在 JsPlus-Core 已改為 protected，不可直接 `new`。當前 core 另外支援的選用鍵：`Url[0]`…`Url[n]`（容錯 URL 清單）、`SyncDataSource`（讀寫分離的同步寫入資料源）、`StatusLogArchiveDays`、`MaxAveUsageSize`、`AbortMode`。
+
+`Timeout` 是**連線租用上限，不是借連線的等待時間**：借出的連線在使用超過 `Timeout` 秒（`autoCommit` 關閉時改用 `TransactionTimeout`）後，會被池管理執行緒 abort —— 此處設 `5m`，卡死的連線可在數分鐘內回收，而不是佔住 100 個池位之一好幾個鐘。池滿時不會排隊等待：`getConnection()` 直接拋 `99903 Full connection pool`。
 
 ### 網頁日誌（`WebLog.*`）
 
